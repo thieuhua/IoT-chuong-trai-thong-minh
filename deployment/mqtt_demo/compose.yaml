@@ -1,0 +1,26 @@
+name: iot-mqtt-demo
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22
+    # All host interfaces: needed for ESP32 on the LAN. Development only.
+    ports:
+      - "1883:1883"
+    volumes:
+      - type: bind
+        source: ./mosquitto.conf
+        target: /mosquitto/config/mosquitto.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-p", "1883", "-t", "_health/mqtt", "-m", "ok", "-q", "1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 3s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
