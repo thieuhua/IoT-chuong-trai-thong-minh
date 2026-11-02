@@ -25,6 +25,7 @@ class GatewayConfig:
     command_timeout_s: float = 10.0
     connect_timeout_s: float = 10.0
     client_id_prefix: str = "backend"
+    bootstrap_password: str | None = None
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> GatewayConfig:
@@ -45,4 +46,7 @@ class GatewayConfig:
             auto_approve=env.get("IOT_AUTO_APPROVE", "0").lower() in {"1", "true", "yes"},
             db_path=Path(env.get("IOT_DB_PATH", str(cls.db_path))),
             command_timeout_s=float(env.get("IOT_COMMAND_TIMEOUT", cls.command_timeout_s)),
+            connect_timeout_s=float(env.get("IOT_CONNECT_TIMEOUT", cls.connect_timeout_s)),
+            client_id_prefix=env.get("IOT_CLIENT_ID_PREFIX", cls.client_id_prefix),
+            bootstrap_password=env.get("MQTT_BOOTSTRAP_PASSWORD"),
         )

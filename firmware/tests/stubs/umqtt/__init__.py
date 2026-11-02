@@ -1,0 +1,1 @@
+"""Host MQTT stub package."""

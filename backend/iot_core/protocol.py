@@ -96,7 +96,8 @@ class Envelope:
     type: str
     data: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    ts: float | None = field(default_factory=time.time)
+    # Whole seconds: ESP32 parses JSON numbers as 32-bit floats, which lose ~128 s at this epoch.
+    ts: float | None = field(default_factory=lambda: int(time.time()))
     v: int = VERSION
 
     def encode(self) -> bytes:

@@ -17,14 +17,14 @@ Tài liệu này là hợp đồng duy nhất giữa firmware ESP32 (`firmware/`
 Mọi payload là JSON UTF-8, tối đa 4096 byte:
 
 ```json
-{"v": 1, "id": "3-17", "ts": 1793577600.0, "type": "telemetry", "data": {}}
+{"v": 1, "id": "3-17", "ts": 1793577600, "type": "telemetry", "data": {}}
 ```
 
 | Trường | Kiểu | Ghi chú |
 | --- | --- | --- |
 | `v` | int | Phiên bản giao thức. Bên nhận bỏ qua (và ghi log) thông điệp có `v` không hỗ trợ. |
 | `id` | string | Duy nhất trong phạm vi người gửi. ESP32 dùng `"<boot>-<seq>"` (bộ đếm khởi động lưu flash + số thứ tự). Backend dùng uuid4 hex. |
-| `ts` | float \| null | Giây Unix UTC lúc gửi. ESP32 gửi `null` khi chưa đồng bộ NTP. Backend luôn lưu thêm `received_at` của riêng mình và coi `ts` của thiết bị chỉ là tham khảo. |
+| `ts` | int \| null | Giây Unix UTC lúc gửi, **số nguyên** (float 32-bit của ESP32 sai tới ~128 s ở giá trị epoch hiện nay). ESP32 gửi `null` khi chưa đồng bộ NTP. Backend luôn lưu thêm `received_at` của riêng mình và coi `ts` của thiết bị chỉ là tham khảo. |
 | `type` | string | Xem từng topic bên dưới. |
 | `data` | object | Nội dung theo `type`. |
 
