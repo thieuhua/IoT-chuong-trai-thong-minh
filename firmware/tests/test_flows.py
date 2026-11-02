@@ -84,7 +84,7 @@ def test_session_connection_order_lwt_and_telemetry(ctx, monkeypatch, board_envi
     client = MQTTClient.instances[-1]
     assert client.client_id == client.user == b"esp32-test"
     assert client.password == ctx.identity.device["password"].encode()
-    assert [e[0] for e in client.events[:5]] == ["will", "connect", "publish", "publish", "subscribe"]
+    assert [e[0] for e in client.events[:5]] == ["will", "connect", "subscribe", "publish", "publish"]
     assert client.will[0] == b"iot/v1/esp32-test/status" and client.will[2:] == (True, 1)
     assert p.decode(client.will[1], p.STATUS)["data"] == {"state": "offline", "reason": "lwt"}
     online, meta, telemetry = client.publishes

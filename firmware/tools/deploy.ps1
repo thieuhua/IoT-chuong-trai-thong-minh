@@ -46,5 +46,11 @@ if ($bad.Count -gt 0) {
 }
 Write-Host ("Verified {0} files on {1}" -f $files.Count, $Port)
 
-& $remoteExe connect $Port reset
-if ($LASTEXITCODE -ne 0) { throw "mpremote reset failed (exit $LASTEXITCODE)" }
+# Windows may not have released the port from the previous mpremote process yet.
+$ErrorActionPreference = "Continue"
+for ($attempt = 1; $attempt -le 5; $attempt++) {
+    Start-Sleep -Milliseconds 800
+    & $remoteExe connect $Port reset 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host "Board reset; firmware starting."; exit 0 }
+}
+throw "Files are on the board but reset failed; press the RESET button."

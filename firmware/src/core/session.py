@@ -36,9 +36,10 @@ def run(ctx):
             ctx.identity.revoke()
             return
         ctx.auth_failures = 0
+        # Subscribe before announcing online: the backend may send a command as soon as it sees it.
+        link.subscribe(command_topic)
         ctx.publish(p.STATUS, {"state": "online"}, retain=True, qos=1)
         ctx.publish_meta()
-        link.subscribe(command_topic)
         ctx.backoff_s = 2
         gc.collect()
         last_telemetry = time.ticks_ms()
