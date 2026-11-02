@@ -10,10 +10,10 @@ Xem dữ liệu **đang nhận** trong VS Code PowerShell:
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-Get-Content .\backend\mqtt_demo\logs\receiver.log -Tail 10 -Wait
+Get-Content .\demo\backend\logs\receiver.log -Tail 10 -Wait
 ```
 
-`Ctrl+C` chỉ dừng xem log. Lỗi bộ nhận ở `backend/mqtt_demo/logs/receiver.err.log`. `esp32.log` và `esp32.err.log` là log của lần chạy RAM trước, không còn cập nhật. Thư mục log được Git bỏ qua. Log bộ nhận hiện ghi liên tục; khi thử xong hãy dừng demo để không tăng log vô hạn.
+`Ctrl+C` chỉ dừng xem log. Lỗi bộ nhận ở `demo/backend/logs/receiver.err.log`. `esp32.log` và `esp32.err.log` là log của lần chạy RAM trước, không còn cập nhật. Thư mục log được Git bỏ qua. Log bộ nhận hiện ghi liên tục; khi thử xong hãy dừng demo để không tăng log vô hạn.
 
 Ví dụ đã nhận thực tế:
 
@@ -21,7 +21,7 @@ Ví dụ đã nhận thực tế:
 RX devices/esp32-mqtt-demo/data {"uptime_s": 4, "simulated": true, "sequence": 1, "device": "esp32-mqtt-demo", "temperature_c": 23.18}
 ```
 
-ESP32 hiện chỉ cần nguồn USB phù hợp, có thể dùng củ sạc hoặc pin dự phòng; không cần cắm cáp dữ liệu vào PC. Laptop vẫn cần bật hotspot và Docker broker để nhận dữ liệu; Python subscriber cần chạy nếu muốn xem log. Trên board có ba file mới: `/main.py`, `/mqtt_demo_app.py` và `/mqtt_demo_settings.py`. `/boot.py` được giữ nguyên và đã sao lưu tại `firmware/mqtt_demo/board_backups/before_autostart_2026-10-28/`; trước khi nạp board chưa có `main.py`. File `firmware/src/main.py` trên PC vẫn giữ nguyên. Cấu hình riêng `firmware/mqtt_demo/mqtt_demo_settings.py` đã được tạo bằng hotspot hiện tại và được Git bỏ qua. Bản nguồn đi kèm chỉ chứa cấu hình example, không chứa mật khẩu Wi-Fi.
+ESP32 hiện chỉ cần nguồn USB phù hợp, có thể dùng củ sạc hoặc pin dự phòng; không cần cắm cáp dữ liệu vào PC. Laptop vẫn cần bật hotspot và Docker broker để nhận dữ liệu; Python subscriber cần chạy nếu muốn xem log. Trên board có ba file mới: `/main.py`, `/mqtt_demo_app.py` và `/mqtt_demo_settings.py`. `/boot.py` được giữ nguyên và đã sao lưu tại `demo/firmware/board_backups/before_autostart_2026-10-28/`; trước khi nạp board chưa có `main.py`. File `firmware/src/main.py` trên PC vẫn giữ nguyên. Cấu hình riêng `demo/firmware/mqtt_demo_settings.py` đã được tạo bằng hotspot hiện tại và được Git bỏ qua. Bản nguồn đi kèm chỉ chứa cấu hình example, không chứa mật khẩu Wi-Fi.
 
 Để dừng bộ nhận nền và broker, dùng đoạn sau. Đoạn này kiểm tra tiến trình và đường dẫn trước khi dừng đúng bộ nhận của demo. COM3 hiện đã được giải phóng:
 
@@ -29,17 +29,17 @@ ESP32 hiện chỉ cần nguồn USB phù hợp, có thể dùng củ sạc ho�
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
 $demoRoot = (Get-Location).Path
 foreach ($role in @('receiver')) {
-    $pidFile = ".\backend\mqtt_demo\logs\$role.pid"
+    $pidFile = ".\demo\backend\logs\$role.pid"
     if (Test-Path $pidFile) {
         $demoProcessId = [int](Get-Content $pidFile)
         $demoProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$demoProcessId"
-        $expectedScript = "$demoRoot\backend\mqtt_demo\subscriber.py"
+        $expectedScript = "$demoRoot\demo\backend\subscriber.py"
         if ($demoProcess -and $demoProcess.CommandLine -like "*$expectedScript*") {
             taskkill /PID $demoProcessId /T /F
         }
     }
 }
-docker compose -f .\deployment\mqtt_demo\compose.yaml down
+docker compose -f .\demo\deployment\compose.yaml down
 ```
 
 Muốn dừng ESP32 thì ngắt nguồn board; nhấn RESET hoặc cấp nguồn lại sẽ tự chạy demo trong flash. Khi broker/hotspot tắt, board sẽ thử kết nối lại. Các bước bên dưới dùng để chạy lại backend trong terminal trực tiếp sau khi dừng bộ nhận nền; subscriber thứ hai cũng có thể chạy song song.
@@ -48,26 +48,28 @@ Muốn dừng ESP32 thì ngắt nguồn board; nhấn RESET hoặc cấp nguồn
 
 ```text
 Project/
-  README_MQTT_DEMO.md
-  deployment/mqtt_demo/
-    compose.yaml
-    mosquitto.conf
-  backend/mqtt_demo/
-    config.py
-    requirements.txt
-    subscriber.py
-    publisher.py
-  firmware/mqtt_demo/
-    .gitignore
-    mqtt_demo_settings.example.py
-    demo.py
-    main.py
+  demo/
+    README.md
+    deployment/
+      compose.yaml
+      mosquitto.conf
+    backend/
+      .gitignore
+      config.py
+      requirements.txt
+      subscriber.py
+      publisher.py
+    firmware/
+      .gitignore
+      mqtt_demo_settings.example.py
+      demo.py
+      main.py
 ```
 
 Python publisher / ESP32 → Mosquitto trên Docker → Python subscriber trên Windows.
 Compose chỉ chạy broker; backend chạy trực tiếp bằng Python. Không cần frontend hay DB.
 README, `.env`, `.gitignore`, `.venv` ở gốc và `firmware/src/main.py` có sẵn được giữ nguyên.
-Các script Python không đọc `.env` có sẵn. Môi trường Python riêng của demo nằm ở `backend/mqtt_demo/.venv`, được quy tắc `.venv/` có sẵn bỏ qua trong Git.
+Các script Python không đọc `.env` có sẵn. Môi trường Python riêng của demo nằm ở `demo/backend/.venv`, được quy tắc `.venv/` có sẵn bỏ qua trong Git.
 
 ## 1. Mở dự án và chạy broker
 
@@ -76,10 +78,10 @@ Terminal PowerShell thứ nhất:
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-docker compose -f .\deployment\mqtt_demo\compose.yaml config
-docker compose -f .\deployment\mqtt_demo\compose.yaml up -d --wait --wait-timeout 60
-docker compose -f .\deployment\mqtt_demo\compose.yaml ps
-docker compose -f .\deployment\mqtt_demo\compose.yaml logs --tail 30 mosquitto
+docker compose -f .\demo\deployment\compose.yaml config
+docker compose -f .\demo\deployment\compose.yaml up -d --wait --wait-timeout 60
+docker compose -f .\demo\deployment\compose.yaml ps
+docker compose -f .\demo\deployment\compose.yaml logs --tail 30 mosquitto
 ```
 
 Lần đầu cần Internet để tải image `eclipse-mosquitto:2.0.22`. `ps` phải báo `healthy` và có ánh xạ cổng 1883. Log phải có `Opening ipv4 listen socket on port 1883` và `mosquitto version ... running`. Log kết nối/publish khác là bình thường, gồm kiểm tra sức khỏe trên topic `_health/mqtt` mỗi 30 giây.
@@ -92,15 +94,15 @@ Dự án hiện có Python 3.11 trong `.venv`. Dùng Python đó để tạo mô
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-if (-not (Test-Path .\backend\mqtt_demo\.venv\Scripts\python.exe)) {
-    & .\.venv\Scripts\python.exe -m venv .\backend\mqtt_demo\.venv
+if (-not (Test-Path .\demo\backend\.venv\Scripts\python.exe)) {
+    & .\.venv\Scripts\python.exe -m venv .\demo\backend\.venv
 }
-& .\backend\mqtt_demo\.venv\Scripts\python.exe -m pip install -r .\backend\mqtt_demo\requirements.txt
+& .\demo\backend\.venv\Scripts\python.exe -m pip install -r .\demo\backend\requirements.txt
 ```
 
-Không cần kích hoạt môi trường nên không cần đổi ExecutionPolicy. Trong VS Code có thể chọn **Python: Select Interpreter → Enter interpreter path** và chọn `E:\thieuh\FolderCode\IoT\Project\backend\mqtt_demo\.venv\Scripts\python.exe`.
+Không cần kích hoạt môi trường nên không cần đổi ExecutionPolicy. Trong VS Code có thể chọn **Python: Select Interpreter → Enter interpreter path** và chọn `E:\thieuh\FolderCode\IoT\Project\demo\backend\.venv\Scripts\python.exe`.
 
-Nếu `.venv` gốc về sau bị xóa/hỏng, dùng Python Windows 3.11+ đã cài để chạy `-m venv .\backend\mqtt_demo\.venv`; không dùng lại một môi trường Python của WSL cho các lệnh Windows.
+Nếu `.venv` gốc về sau bị xóa/hỏng, dùng Python Windows 3.11+ đã cài để chạy `-m venv .\demo\backend\.venv`; không dùng lại một môi trường Python của WSL cho các lệnh Windows.
 
 ## 3. Chạy subscriber và thông điệp tự kiểm tra
 
@@ -108,7 +110,7 @@ Terminal PowerShell thứ nhất:
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-& .\backend\mqtt_demo\.venv\Scripts\python.exe .\backend\mqtt_demo\subscriber.py
+& .\demo\backend\.venv\Scripts\python.exe .\demo\backend\subscriber.py
 ```
 
 Kết quả mong đợi:
@@ -126,9 +128,9 @@ Giữ subscriber đang chạy, mở **terminal PowerShell thứ hai**:
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-& .\backend\mqtt_demo\.venv\Scripts\python.exe .\backend\mqtt_demo\publisher.py
-& .\backend\mqtt_demo\.venv\Scripts\python.exe .\backend\mqtt_demo\publisher.py --temperature 29.2
-& .\backend\mqtt_demo\.venv\Scripts\python.exe .\backend\mqtt_demo\publisher.py --message 'Xin chao MQTT'
+& .\demo\backend\.venv\Scripts\python.exe .\demo\backend\publisher.py
+& .\demo\backend\.venv\Scripts\python.exe .\demo\backend\publisher.py --temperature 29.2
+& .\demo\backend\.venv\Scripts\python.exe .\demo\backend\publisher.py --message 'Xin chao MQTT'
 ```
 
 Mỗi lệnh gửi một lần rồi thoát. Subscriber hiện `RX devices/pc-demo/data ...`; hai lệnh đầu có JSON chứa `temperature_c`, `simulated: true`, thời gian UTC. Đây là nhiệt độ mô phỏng, không phải số đo cảm biến. Dữ liệu không dùng retain nên phải mở subscriber trước publisher.
@@ -138,7 +140,7 @@ Python publish QoS 1 và đợi broker xác nhận. QoS 1 có thể tạo bản 
 Kiểm tra nhanh một lần, tự thoát sau khi nhận thông điệp thử:
 
 ```powershell
-& .\backend\mqtt_demo\.venv\Scripts\python.exe .\backend\mqtt_demo\subscriber.py --once --timeout 15
+& .\demo\backend\.venv\Scripts\python.exe .\demo\backend\subscriber.py --once --timeout 15
 ```
 
 Kiểm tra publisher riêng: chạy subscriber với `--no-self-test --once --timeout 30`, chờ `READY`, rồi chạy publisher ở terminal thứ hai trong vòng 30 giây. Các lệnh Python trả exit code 1 khi kết nối lỗi hoặc hết thời gian chờ.
@@ -157,10 +159,10 @@ Trong cấu hình hiện tại, ESP32 kết nối **hotspot phát từ laptop**,
 
 ```powershell
 ipconfig
-& .\backend\mqtt_demo\.venv\Scripts\python.exe .\backend\mqtt_demo\publisher.py --host 192.168.137.1 --port 1883
+& .\demo\backend\.venv\Scripts\python.exe .\demo\backend\publisher.py --host 192.168.137.1 --port 1883
 ```
 
-Mặc định sửa tại `backend/mqtt_demo/config.py`, hoặc truyền `--host`, `--port` cho cả hai script. Publisher nhận thêm `--topic`; topic phải khớp filter subscriber để nhận được.
+Mặc định sửa tại `demo/backend/config.py`, hoặc truyền `--host`, `--port` cho cả hai script. Publisher nhận thêm `--topic`; topic phải khớp filter subscriber để nhận được.
 
 | Vai trò | Topic |
 | --- | --- |
@@ -180,11 +182,11 @@ Khi cần sửa mã/cấu hình và **nạp lại**, đóng ứng dụng đang g
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect COM3 soft-reset
-& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect COM3 fs cp .\firmware\mqtt_demo\demo.py :/mqtt_demo_app.py
-& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect COM3 fs cp .\firmware\mqtt_demo\mqtt_demo_settings.py :/mqtt_demo_settings.py
-& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect COM3 fs cp .\firmware\mqtt_demo\main.py :/main.py
-& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect COM3 reset
+& .\demo\backend\.venv\Scripts\mpremote.exe connect COM3 soft-reset
+& .\demo\backend\.venv\Scripts\mpremote.exe connect COM3 fs cp .\demo\firmware\demo.py :/mqtt_demo_app.py
+& .\demo\backend\.venv\Scripts\mpremote.exe connect COM3 fs cp .\demo\firmware\mqtt_demo_settings.py :/mqtt_demo_settings.py
+& .\demo\backend\.venv\Scripts\mpremote.exe connect COM3 fs cp .\demo\firmware\main.py :/main.py
+& .\demo\backend\.venv\Scripts\mpremote.exe connect COM3 reset
 ```
 
 Các lệnh trên cập nhật đúng ba file demo trong flash. `boot.py` và thư viện MicroPython hiện có không bị thay. Mã demo tự thử lại khi lỗi mạng; nếu gặp lỗi chương trình ngoài dự kiến, `main.py` in lỗi rồi reset sau 5 giây. Nếu muốn trở về trạng thái board trước lần nạp này (chỉ có `boot.py` và không tự chạy ứng dụng), ngắt ứng dụng qua `mpremote connect COM3 soft-reset`, đổi tên `/main.py` thành `/main.mqtt-demo.disabled.py` bằng `os.rename`, rồi reset. Bản sao `boot.py` trong `board_backups` được Git bỏ qua.
@@ -197,22 +199,22 @@ Tạo file cấu hình cá nhân nếu chưa có:
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-if (-not (Test-Path .\firmware\mqtt_demo\mqtt_demo_settings.py)) {
-    Copy-Item .\firmware\mqtt_demo\mqtt_demo_settings.example.py .\firmware\mqtt_demo\mqtt_demo_settings.py
+if (-not (Test-Path .\demo\firmware\mqtt_demo_settings.py)) {
+    Copy-Item .\demo\firmware\mqtt_demo_settings.example.py .\demo\firmware\mqtt_demo_settings.py
 }
 ```
 
-Sửa `firmware/mqtt_demo/mqtt_demo_settings.py`: tên Wi-Fi, mật khẩu và `MQTT_HOST` bằng IPv4 LAN của máy Windows. File này được `.gitignore` riêng bỏ qua; không đưa mật khẩu vào file example. ESP32 và PC cần mạng cho phép liên lạc trực tiếp; ESP32 phổ biến dùng Wi-Fi 2.4 GHz. Mạng trường/công ty hoặc guest Wi-Fi có thể chặn giao tiếp dù cùng tên Wi-Fi.
+Sửa `demo/firmware/mqtt_demo_settings.py`: tên Wi-Fi, mật khẩu và `MQTT_HOST` bằng IPv4 LAN của máy Windows. File này được `.gitignore` riêng bỏ qua; không đưa mật khẩu vào file example. ESP32 và PC cần mạng cho phép liên lạc trực tiếp; ESP32 phổ biến dùng Wi-Fi 2.4 GHz. Mạng trường/công ty hoặc guest Wi-Fi có thể chặn giao tiếp dù cùng tên Wi-Fi.
 
 Công cụ đã được cài trong môi trường demo và board hiện ở **COM3**. Nếu muốn thử tạm một bản sửa từ RAM, đóng serial monitor khác trước:
 
 ```powershell
-& .\backend\mqtt_demo\.venv\Scripts\python.exe -m pip install mpremote
-& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect list
-& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect COM3 mount .\firmware\mqtt_demo run .\firmware\mqtt_demo\demo.py
+& .\demo\backend\.venv\Scripts\python.exe -m pip install mpremote
+& .\demo\backend\.venv\Scripts\mpremote.exe connect list
+& .\demo\backend\.venv\Scripts\mpremote.exe connect COM3 mount .\demo\firmware run .\demo\firmware\demo.py
 ```
 
-Board hiện đã có `umqtt.simple`, nên không cài hay thay thư viện trên board. Nếu dùng board khác thiếu thư viện, cài bằng `& .\backend\mqtt_demo\.venv\Scripts\mpremote.exe connect COM3 mip install umqtt.simple` (cần Internet trên PC; ghi thư viện vào board). Lệnh `mount ... run ...` chỉ là chế độ thử từ RAM, cần giữ cáp USB và terminal trong phiên thử. Nó ngắt chương trình đang chạy trên board, không ghi đè `main.py`. Sau reset board sẽ chạy lại demo đã lưu trong flash.
+Board hiện đã có `umqtt.simple`, nên không cài hay thay thư viện trên board. Nếu dùng board khác thiếu thư viện, cài bằng `& .\demo\backend\.venv\Scripts\mpremote.exe connect COM3 mip install umqtt.simple` (cần Internet trên PC; ghi thư viện vào board). Lệnh `mount ... run ...` chỉ là chế độ thử từ RAM, cần giữ cáp USB và terminal trong phiên thử. Nó ngắt chương trình đang chạy trên board, không ghi đè `main.py`. Sau reset board sẽ chạy lại demo đã lưu trong flash.
 
 Mở Python subscriber ở terminal khác để thấy `RX devices/esp32-mqtt-demo/data ...`. Dừng thử bằng `Ctrl+C`. Đường truyền này đã kiểm tra bằng ESP32 thật ở COM3 qua hotspot `192.168.137.1`, không cần đổi firewall trên máy hiện tại.
 
@@ -238,21 +240,21 @@ Remove-NetFirewallRule -DisplayName 'IoT MQTT demo TCP 1883 Private LAN'
 
 ```powershell
 Set-Location 'E:\thieuh\FolderCode\IoT\Project'
-docker compose -f .\deployment\mqtt_demo\compose.yaml logs -f --tail 50 mosquitto
+docker compose -f .\demo\deployment\compose.yaml logs -f --tail 50 mosquitto
 ```
 
 `Ctrl+C` ở lệnh xem log chỉ thoát theo dõi. Dừng subscriber riêng bằng `Ctrl+C`, rồi dừng/xóa container và mạng của demo:
 
 ```powershell
-docker compose -f .\deployment\mqtt_demo\compose.yaml down
+docker compose -f .\demo\deployment\compose.yaml down
 ```
 
 - Không kết nối được Docker: mở Docker Desktop, đợi engine chạy và dùng Linux containers.
 - `port is already allocated`: có chương trình/broker chiếm 1883; không dừng chương trình lạ. Kiểm tra `docker ps` và `Get-NetTCPConnection -LocalPort 1883 -State Listen`.
 - `Connection refused`: broker chưa chạy, sai host/port, hoặc container khởi động lỗi; xem `ps` và `logs`.
-- `ModuleNotFoundError: paho`: dùng đúng Python trong `backend/mqtt_demo/.venv` và chạy lại lệnh cài requirements.
+- `ModuleNotFoundError: paho`: dùng đúng Python trong `demo/backend/.venv` và chạy lại lệnh cài requirements.
 - Không thấy `RX`: mở subscriber trước, chờ `READY`, kiểm tra topic khớp `devices/+/data` và cả hai client dùng cùng broker.
-- Sau khi sửa `mosquitto.conf`, chạy `docker compose -f .\deployment\mqtt_demo\compose.yaml restart mosquitto` và kiểm tra log.
+- Sau khi sửa `mosquitto.conf`, chạy `docker compose -f .\demo\deployment\compose.yaml restart mosquitto` và kiểm tra log.
 - Nếu đổi cổng host thành `1884:1883`, Python cần `--port 1884` và ESP32 cần `MQTT_PORT = 1884`; listener trong container vẫn là 1883.
 
 ## Tài liệu chính thức
