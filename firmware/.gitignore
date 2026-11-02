@@ -1,3 +1,8 @@
 bin/
 
 NOTE.md
+src/config.json
+.venv/
+__pycache__/
+.pytest_cache/
+.pytest_tmp/

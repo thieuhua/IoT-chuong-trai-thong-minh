@@ -1,0 +1,15 @@
+{
+  "wifi": {"ssid": "YOUR_WIFI_SSID", "password": "YOUR_WIFI_PASSWORD"},
+  "mqtt": {
+    "host": "192.168.137.1", "port": 1883, "keepalive": 30,
+    "bootstrap_user": "bootstrap", "bootstrap_password": "FROM_deployment/.env"
+  },
+  "interval_s": 10,
+  "provision_retry_s": 10,
+  "ntp": true,
+  "watchdog_s": 0,
+  "sensors": [
+    {"driver": "dht11", "name": "room", "pin": 23},
+    {"driver": "simulated", "name": "sim"}
+  ]
+}
