@@ -79,6 +79,134 @@ def test_sequence_timing_and_ten_second_cycle(board_environment):
     assert servo.running
 
 
+@pytest.mark.parametrize("start,target", [(0, 20), (20, 0)])
+def test_slew_limit_reaches_twenty_degree_target_in_three_ticks(
+        start, target, board_environment):
+    servo = Servo(config(max_dps=360, sequence=dict(angles=[start])))
+    assert servo.position is None and not servo.attached
+    assert servo.pwm.duty_values == [0]
+    tick_at(servo, board_environment, 0)
+    assert servo.position == start and servo.attached
+    assert servo.pwm.duty_values == [0, duty(start)]
+
+    servo.set_angle(target)
+    assert servo.position == start
+    direction = 1 if target > start else -1
+    previous = start
+    for now, distance in ((20, 7.2), (40, 14.4), (60, 20)):
+        tick_at(servo, board_environment, now)
+        assert servo.position == pytest.approx(start + direction * distance)
+        assert min(start, target) <= servo.position <= max(start, target)
+        assert 0 < direction * (servo.position - previous) <= 7.2 + 1e-9
+        assert servo.pwm.duty_values[-1] == duty(servo.position)
+        previous = servo.position
+    # 20 / 360 s is about 56 ms, sampled on the first tick at 60 ms.
+    assert servo.position == target and servo.angle == target
+    writes = servo.pwm.duty_values[:]
+    assert len(writes) == 5
+    assert all(direction * (b - a) > 0 for a, b in zip(writes[1:], writes[2:]))
+    tick_at(servo, board_environment, 80)
+    assert servo.pwm.duty_values == writes
+
+
+def test_slew_return_from_180_to_zero_within_one_second(board_environment):
+    servo = Servo(config(max_dps=360, sequence=dict(angles=[180, 0], step_ms=1000)))
+    tick_at(servo, board_environment, 0)
+    assert servo.position == 180
+    reached_at = None
+    previous = 180
+    for now in range(20, 2000, 20):
+        tick_at(servo, board_environment, now)
+        if now < 1000:
+            assert servo.position == 180
+        else:
+            assert servo.angle == 0
+            assert 0 <= servo.position <= previous
+            assert previous - servo.position <= 7.2 + 1e-9
+            if servo.position == 0 and reached_at is None:
+                reached_at = now
+        previous = servo.position
+    assert reached_at is not None and 0 < reached_at - 1000 <= 1000
+    assert servo.position == 0
+    assert servo.pwm.duty_values[-1] == duty(0)
+
+
+def test_detach_after_arrival_once_and_reattach_from_last_position(board_environment):
+    servo = Servo(config(initial=20, max_dps=360, detach_ms=300))
+    tick_at(servo, board_environment, 0)
+    servo.set_angle(40)
+    for now in (20, 40, 60):
+        tick_at(servo, board_environment, now)
+    assert servo.position == 40 and servo.attached
+    writes = servo.pwm.duty_values[:]
+    for now in range(80, 360, 20):
+        tick_at(servo, board_environment, now)
+        assert servo.attached
+        assert servo.pwm.duty_values == writes
+    tick_at(servo, board_environment, 360)
+    assert not servo.attached and servo.position == 40
+    assert servo.pwm.duty_values == writes + [0]
+    for now in range(380, 501, 20):
+        tick_at(servo, board_environment, now)
+        assert servo.pwm.duty_values == writes + [0]
+        assert not servo.attached
+
+    servo.set_angle(60)
+    for now, position in ((520, 47.2), (540, 54.4), (560, 60)):
+        tick_at(servo, board_environment, now)
+        assert servo.attached
+        assert servo.position == pytest.approx(position)
+        assert servo.pwm.duty_values[-1] == duty(servo.position)
+    assert servo.position == 60
+    assert servo.pwm.duty_values.count(0) == 2  # PWM initialization and one detach.
+
+
+def test_autostart_waits_eight_seconds_before_first_pulse(board_environment):
+    servo = Servo(config(max_dps=360, start_delay_ms=8000, sequence=sequence()))
+    assert servo.running
+    for now in range(0, 8000, 20):
+        tick_at(servo, board_environment, now)
+        assert servo.pwm.duty_values == [0]
+        assert servo.angle is None and servo.position is None
+        assert not servo.attached
+    tick_at(servo, board_environment, 8000)
+    assert servo.pwm.duty_values == [0, duty(ANGLES[0])]
+    assert servo.angle == servo.position == ANGLES[0]
+    assert servo.attached
+
+
+def test_set_angle_with_slew_stops_sequence_and_finishes_manual_move(board_environment):
+    servo = Servo(config(max_dps=360, sequence=sequence()))
+    tick_at(servo, board_environment, 0)
+    servo.set_angle(90)
+    assert not servo.running and servo.angle == 90 and servo.position == 0
+    assert servo.pwm.duty_values == [0, duty(0)]
+    for now in range(20, 280, 20):
+        tick_at(servo, board_environment, now)
+        assert not servo.running and servo.angle == 90
+        assert servo.position == pytest.approx(min(360 * now / 1000, 90))
+    assert servo.position == 90
+    writes = servo.pwm.duty_values[:]
+    for now in range(280, 2020, 20):
+        tick_at(servo, board_environment, now)
+        assert not servo.running and servo.angle == servo.position == 90
+        assert servo.pwm.duty_values == writes
+
+
+def test_power_options_preserve_state_shape(board_environment):
+    servo = Servo(config(max_dps=360, detach_ms=300, start_delay_ms=8000,
+                         sequence=sequence()))
+    assert servo.state() == dict(angle=None, running=True, angles=ANGLES, step_ms=1000)
+    tick_at(servo, board_environment, 8000)
+    servo.set_angle(20)
+    expected = dict(angle=20, running=False, angles=ANGLES, step_ms=1000)
+    assert servo.state() == expected
+    for now in range(8020, 8380, 20):
+        tick_at(servo, board_environment, now)
+        assert servo.state() == expected
+    assert servo.position == 20 and not servo.attached
+
+
 def test_sequence_ticks_wraparound(board_environment):
     origin = (1 << 30) - 500
     board_environment[0] = origin
