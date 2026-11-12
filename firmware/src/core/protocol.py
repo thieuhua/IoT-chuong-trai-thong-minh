@@ -24,6 +24,7 @@ ERR_BAD_ARGS = "bad_args"
 ERR_SENSOR_NOT_FOUND = "sensor_not_found"
 ERR_SENSOR_ERROR = "sensor_error"
 ERR_INTERNAL = "internal"
+ERR_ACTUATOR_NOT_FOUND = "actuator_not_found"
 
 
 class ProtocolError(ValueError):

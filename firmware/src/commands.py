@@ -66,6 +66,45 @@ def set_interval(ctx, args):
     return {"interval_s": seconds}
 
 
+def _actuator(ctx, args):
+    name = args.get("name")
+    if "name" in args and (not isinstance(name, str) or not name):
+        raise CommandError(p.ERR_BAD_ARGS, "name must be a nonempty string")
+    actuator = ctx.actuator(name)
+    if actuator is None:
+        raise CommandError(p.ERR_ACTUATOR_NOT_FOUND,
+                           "no actuator '" + str(name) + "'" if name else "name required")
+    return actuator
+
+
+@register("servo_set")
+def servo_set(ctx, args):
+    _args(args, ("name", "angle"))
+    servo = _actuator(ctx, args)
+    try:
+        servo.set_angle(args.get("angle"))
+    except ValueError as exc:
+        raise CommandError(p.ERR_BAD_ARGS, str(exc))
+    return servo.state()
+
+
+@register("servo_sequence")
+def servo_sequence(ctx, args):
+    _args(args, ("name", "run", "angles", "step_ms"))
+    servo = _actuator(ctx, args)
+    run = args.get("run", True)
+    if type(run) is not bool:
+        raise CommandError(p.ERR_BAD_ARGS, "run must be true or false")
+    try:
+        if run:
+            servo.start(args.get("angles"), args.get("step_ms"))
+        else:
+            servo.stop()
+    except ValueError as exc:
+        raise CommandError(p.ERR_BAD_ARGS, str(exc))
+    return servo.state()
+
+
 @register("reboot")
 def reboot(ctx, args):
     _args(args)
