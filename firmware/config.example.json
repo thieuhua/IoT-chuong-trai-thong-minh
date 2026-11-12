@@ -47,7 +47,10 @@
         ],
         "step_ms": 1000,
         "autostart": true
-      }
+      },
+      "max_dps": 360,
+      "detach_ms": 300,
+      "start_delay_ms": 8000
     }
   ]
 }
