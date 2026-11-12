@@ -10,11 +10,13 @@ from core.identity import Identity
 from core.mqtt_link import MQTTLink, NotAuthorised
 from core.runtime import pause
 from core.storage import load_json
+from actuators import build_actuators
 from sensors import build_sensors
 from sensors.base import SensorError
 from umqtt.simple import MQTTException
 
-FW_VERSION = "0.1.0"
+FW_VERSION = "0.2.0"
+ACTUATOR_TICK_MS = 20
 
 
 class App:
@@ -25,6 +27,14 @@ class App:
         self.started_at = time.ticks_ms()
         self.interval_s = self.identity.state.get("interval_s", config.get("interval_s", 10))
         self.sensors = build_sensors(config.get("sensors", []))
+        self.actuators = build_actuators(config.get("actuators", []))
+        self._timer = None
+        if self.actuators:
+            # Hardware timer, not the session loop: sequences keep their timing while the
+            # network code blocks (reconnects, QoS 1 waits).
+            self._timer = machine.Timer(0)
+            self._timer.init(mode=machine.Timer.PERIODIC, period=ACTUATOR_TICK_MS,
+                             callback=self._tick_actuators)
         self.link = None
         self.reboot_requested = False
         self.meta_dirty = False
@@ -39,13 +49,34 @@ class App:
         if self.watchdog:
             self.watchdog.feed()
 
+    def _tick_actuators(self, _timer):
+        now = time.ticks_ms()
+        for actuator in self.actuators:
+            try:
+                actuator.tick(now)
+            except Exception as exc:
+                actuator.running = False
+                print("Actuator", actuator.name, "stopped:", exc)
+
+    def actuator(self, name=None):
+        """Actuator by name; name may be omitted when exactly one is configured."""
+        if name is None and len(self.actuators) == 1:
+            return self.actuators[0]
+        for actuator in self.actuators:
+            if actuator.name == name:
+                return actuator
+        return None
+
     def uptime_s(self):
         return time.ticks_diff(time.ticks_ms(), self.started_at) // 1000
 
     def meta(self):
-        return {"hw_id": self.identity.hw_id, "model": "esp32", "fw": FW_VERSION,
-                "sensors": [sensor.meta() for sensor in self.sensors],
-                "commands": list(commands.REGISTRY), "interval_s": self.interval_s}
+        result = {"hw_id": self.identity.hw_id, "model": "esp32", "fw": FW_VERSION,
+                  "sensors": [sensor.meta() for sensor in self.sensors],
+                  "commands": list(commands.REGISTRY), "interval_s": self.interval_s}
+        if self.actuators:
+            result["actuators"] = [actuator.meta() for actuator in self.actuators]
+        return result
 
     def encode(self, msg_type, data):
         return p.encode(msg_type, data, self.identity.next_id(), self.clock.now())

@@ -1,6 +1,7 @@
 import json
 import pytest
 import commands
+import app
 from core import protocol as p
 from core import session
 from sensors.base import Sensor, SensorError
@@ -17,11 +18,12 @@ def invoke(ctx, name, args=None, ts=None, ttl=30):
 def test_ping_and_info(ctx):
     assert invoke(ctx, "ping") == {"re": "cmd-1", "ok": True, "result": {"uptime_s": 0}}
     result = invoke(ctx, "get_info")["result"]
-    assert result["fw"] == "0.1.0"
+    assert result["fw"] == app.FW_VERSION
     assert result["hw_id"] == ctx.identity.hw_id
     assert result["ip"] == "192.0.2.10" and result["rssi"] == -45
     assert result["mem_free"] > 0
-    assert result["commands"] == ["ping", "get_info", "read", "set_interval", "reboot"]
+    assert result["commands"] == ["ping", "get_info", "read", "set_interval",
+                                  "servo_set", "servo_sequence", "reboot"]
 
 
 def test_read_all_and_one(ctx):

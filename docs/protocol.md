@@ -106,9 +106,13 @@ Quy tắc:
   "hw_id": "a0b1c2d3e4f5", "model": "esp32", "fw": "0.1.0",
   "sensors": [{"name": "room", "driver": "dht11", "fields": {"temperature": "°C", "humidity": "%"}}],
   "commands": ["ping", "get_info", "read", "set_interval", "reboot"],
-  "interval_s": 10
+  "interval_s": 10,
+  "actuators": [{"name": "servo", "driver": "servo", "pin": 26, "range": [0, 180]}]
 }
 ```
+
+`actuators` chỉ có khi thiết bị khai báo cơ cấu chấp hành (servo, relay...). Backend hiện lưu nguyên `meta`
+nhưng chưa có trường riêng cho actuator; trạng thái đọc qua lệnh `get_info` hoặc kết quả lệnh điều khiển.
 
 ## 6. Telemetry
 
@@ -142,8 +146,14 @@ Envelope `id` của lệnh dùng làm mã ghép phản hồi. Thiết bị bỏ 
 | `read` | `{"sensor": "room"}` hoặc `{}` (tất cả) | giống `data` của telemetry |
 | `set_interval` | `{"seconds": 10}` (1–3600) | `{"interval_s": 10}`; thiết bị lưu vào flash |
 | `reboot` | — | `{}`; thiết bị trả lời, publish `offline` (`reboot`), rồi reset sau ~1 s |
+| `servo_set` | `{"name": "servo", "angle": 90}` (0–180; `name` bỏ được khi chỉ có 1 actuator) | trạng thái servo; dừng chuỗi góc nếu đang chạy |
+| `servo_sequence` | `{"name": "servo", "run": true, "angles": [0, 20, …, 180], "step_ms": 1000}` (`angles`, `step_ms` tùy chọn; `run: false` để dừng) | trạng thái servo |
 
-Mã lỗi: `unknown_command`, `bad_args`, `sensor_not_found`, `sensor_error`, `internal`.
+Trạng thái servo: `{"angle": 40, "running": true, "angles": [0, 20, …, 180], "step_ms": 1000}`.
+Chuỗi góc chạy bằng hardware timer trên thiết bị (không phụ thuộc kết nối mạng) và lặp vô hạn; cấu hình
+khởi động nằm trong `config.json` (`sequence.autostart`). Thay đổi bằng lệnh không lưu qua lần khởi động lại.
+
+Mã lỗi: `unknown_command`, `bad_args`, `sensor_not_found`, `sensor_error`, `actuator_not_found`, `internal`.
 Thêm lệnh mới: khai báo ở bảng này, đăng ký handler trong `firmware/src/commands.py`, thêm hàm tiện ích trong `DeviceGateway` nếu cần.
 
 ## 8. Quyền trên broker (Mosquitto Dynamic Security)

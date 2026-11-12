@@ -23,7 +23,14 @@ $remoteArgs = @("connect", $Port)
 if ($Wipe) {
     $remoteArgs += @("exec", "import os`nfor p in ('/device.json', '/state.json'):`n try:`n  os.remove(p)`n except OSError as e:`n  if e.args[0] != 2: raise", "+")
 }
-$remoteArgs += @("exec", "import os`nfor p in ('/core', '/sensors'):`n try:`n  os.mkdir(p)`n except OSError as e:`n  if e.args[0] != 17: raise", "+")
+# Every package directory under src/ (core, sensors, actuators, ...) must exist before copying.
+$dirs = @($files | ForEach-Object { $_.Remote.Substring(0, $_.Remote.LastIndexOf('/')) } |
+    Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { "'" + $_ + "'" })
+if ($dirs.Count -gt 0) {
+    # Build the string first: inside @(...) the comma binds tighter than +.
+    $mkdir = "import os`nfor p in (" + ($dirs -join ",") + ",):`n try:`n  os.mkdir(p)`n except OSError as e:`n  if e.args[0] != 17: raise"
+    $remoteArgs += @("exec", $mkdir, "+")
+}
 foreach ($file in $files) {
     $remoteArgs += @("fs", "cp", $file.Local, (":" + $file.Remote), "+")
 }
@@ -32,7 +39,10 @@ $verify = "import hashlib,binascii`nfor f in ($paths,):`n h=hashlib.sha256()`n w
 $remoteArgs += @("exec", $verify)
 
 $output = & $remoteExe @remoteArgs
-if ($LASTEXITCODE -ne 0) { throw "mpremote failed (exit $LASTEXITCODE)" }
+if ($LASTEXITCODE -ne 0) {
+    $output | Select-Object -Last 15 | ForEach-Object { Write-Host $_ }
+    throw "mpremote failed (exit $LASTEXITCODE)"
+}
 
 $remoteHashes = @{}
 foreach ($line in $output) {

@@ -1,15 +1,56 @@
 {
-  "wifi": {"ssid": "YOUR_WIFI_SSID", "password": "YOUR_WIFI_PASSWORD"},
+  "wifi": {
+    "ssid": "YOUR_WIFI_SSID",
+    "password": "YOUR_WIFI_PASSWORD"
+  },
   "mqtt": {
-    "host": "192.168.137.1", "port": 1883, "keepalive": 30,
-    "bootstrap_user": "bootstrap", "bootstrap_password": "FROM_deployment/.env"
+    "host": "192.168.137.1",
+    "port": 1883,
+    "keepalive": 30,
+    "bootstrap_user": "bootstrap",
+    "bootstrap_password": "FROM_deployment/.env"
   },
   "interval_s": 10,
   "provision_retry_s": 10,
   "ntp": true,
   "watchdog_s": 0,
   "sensors": [
-    {"driver": "dht11", "name": "room", "pin": 23},
-    {"driver": "simulated", "name": "sim"}
+    {
+      "driver": "dht11",
+      "name": "room",
+      "pin": 14
+    },
+    {
+      "driver": "simulated",
+      "name": "sim"
+    }
+  ],
+  "actuators": [
+    {
+      "driver": "servo",
+      "name": "servo",
+      "pin": 26,
+      "min_us": 500,
+      "max_us": 2400,
+      "sequence": {
+        "angles": [
+          0,
+          20,
+          40,
+          60,
+          80,
+          100,
+          120,
+          140,
+          160,
+          180
+        ],
+        "step_ms": 1000,
+        "autostart": true
+      },
+      "max_dps": 360,
+      "detach_ms": 300,
+      "start_delay_ms": 8000
+    }
   ]
 }
