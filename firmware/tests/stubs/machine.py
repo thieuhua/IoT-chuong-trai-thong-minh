@@ -41,3 +41,39 @@ class WDT:
 
     def feed(self):
         self.feeds += 1
+
+
+class PWM:
+    def __init__(self, pin, *, freq=50, duty_u16=0):
+        self.pin = pin
+        self.freq = freq
+        self.duty_values = [duty_u16]
+        self.deinitialized = False
+
+    def duty_u16(self, value):
+        self.duty_values.append(value)
+
+    def deinit(self):
+        self.deinitialized = True
+
+
+class Timer:
+    PERIODIC = 1
+
+    def __init__(self, id):
+        self.id = id
+        self.callback = None
+        self.active = False
+
+    def init(self, *, mode, period, callback):
+        self.mode = mode
+        self.period = period
+        self.callback = callback
+        self.active = True
+
+    def fire(self):
+        if self.active:
+            self.callback(self)
+
+    def deinit(self):
+        self.active = False

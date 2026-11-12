@@ -14,6 +14,8 @@ def board_environment(monkeypatch):
     # Every host write, including pytest temp files, stays inside firmware/.
     elapsed = [0]
     monkeypatch.setattr(time, "ticks_ms", lambda: elapsed[0] % (1 << 30), raising=False)
+    monkeypatch.setattr(time, "ticks_add", lambda ticks, delta: (ticks + delta) % (1 << 30),
+                        raising=False)
     monkeypatch.setattr(time, "ticks_diff",
                         lambda a, b: ((a - b + (1 << 29)) % (1 << 30)) - (1 << 29), raising=False)
     monkeypatch.setattr(time, "sleep_ms", lambda ms: elapsed.__setitem__(0, elapsed[0] + ms), raising=False)

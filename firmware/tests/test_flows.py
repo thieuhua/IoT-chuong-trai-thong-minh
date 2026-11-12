@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import pytest
+import app
 from core import provisioning, session, protocol as p
 from core.mqtt_link import MQTTLink, NotAuthorised
 from umqtt.simple import MQTTClient, MQTTException
@@ -26,7 +27,7 @@ def test_pending_approved(ctx, capsys):
     assert raw[2:] == (False, 0)
     data = p.decode(raw[1], p.PROVISION_REQUEST)["data"]
     assert data["password"] == password and data["hw_id"] == ctx.identity.hw_id
-    assert data["model"] == "esp32" and data["fw"] == "0.1.0"
+    assert data["model"] == "esp32" and data["fw"] == app.FW_VERSION
     assert "sensors" in data and "commands" in data and "interval_s" not in data
     assert json.loads(Path(ctx.identity.device_path).read_text())["device_id"] == "esp32-approved"
     assert ctx.identity.device["password"] == password
