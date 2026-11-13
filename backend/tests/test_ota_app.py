@@ -6,6 +6,7 @@ from fastapi import Request
 import pytest
 
 from app.main import app, events, lifespan
+from app.main import MAX_FINISHED_JOBS
 from iot_core import CommandFailed, DeviceGateway
 from test_app import http
 
@@ -105,3 +106,34 @@ async def test_shutdown_cancels_before_gateway_stop(gateway, monkeypatch):
     job = app.state.firmware_jobs[posted['job_id']]
     assert job['state'] == 'failed' and job['finished_at']
     assert 'cancelled' in job['error']
+
+
+async def test_job_eviction_removes_oldest_finished_and_keeps_running(gateway, monkeypatch):
+    async def update(*args, **kwargs):
+        return {'state': 'confirmed'}
+    monkeypatch.setattr(gateway, 'update_firmware', update)
+    app.state.firmware_jobs = {
+        'running': {'device_id': 'busy', 'state': 'running'},
+        **{str(i): {'device_id': 'old', 'state': 'succeeded' if i % 2 else 'failed'}
+           for i in range(MAX_FINISHED_JOBS + 2)},
+    }
+    status, posted = await http(gateway, 'POST', '/devices/dev/firmware',
+                                {'version': 'v2', 'files': {'app.py': 'YWJj'}})
+    assert status == 202
+    await asyncio.gather(*app.state.firmware_tasks)
+    assert list(app.state.firmware_jobs) == [
+        'running', *map(str, range(3, MAX_FINISHED_JOBS + 2)), posted['job_id']]
+    assert sum(j['state'] != 'running' for j in app.state.firmware_jobs.values()) == MAX_FINISHED_JOBS
+
+
+async def test_finished_job_count_never_exceeds_cap(gateway, monkeypatch):
+    async def update(*args, **kwargs):
+        return {'state': 'confirmed'}
+    monkeypatch.setattr(gateway, 'update_firmware', update)
+    app.state.firmware_jobs = {
+        str(i): {'device_id': 'old', 'state': 'succeeded'} for i in range(MAX_FINISHED_JOBS)}
+    status, _ = await http(gateway, 'POST', '/devices/dev/firmware',
+                           {'version': 'v2', 'files': {'app.py': 'YWJj'}})
+    assert status == 202
+    await asyncio.gather(*app.state.firmware_tasks)
+    assert sum(j['state'] != 'running' for j in app.state.firmware_jobs.values()) <= MAX_FINISHED_JOBS

@@ -143,7 +143,8 @@ async def firmware(request: Request, device_id: str, body: FirmwareBody):
                progress=None, result=None, error=None, started_at=datetime.now(timezone.utc).isoformat(),
                finished_at=None)
     finished = [key for key, old in state.firmware_jobs.items() if old["state"] != "running"]
-    for key in finished[:max(0, len(state.firmware_jobs) - MAX_FINISHED_JOBS)]:
+    # Leave room for the new job: it will be a finished job too once it ends.
+    for key in finished[:max(0, len(finished) - MAX_FINISHED_JOBS + 1)]:
         del state.firmware_jobs[key]  # dicts keep insertion order: oldest finished jobs go first
     state.firmware_jobs[job_id] = job
     task = asyncio.create_task(run_firmware_job(request.app, job, files, body.wait_confirm))

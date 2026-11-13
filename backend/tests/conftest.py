@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
+import sys
+from tempfile import TemporaryDirectory
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
@@ -8,6 +13,14 @@ from iot_core import AuthMode, DeviceGateway, GatewayConfig
 from iot_core.broker_auth import NoAuth
 from iot_core.registry import SqliteDeviceRegistry
 from iot_core.telemetry import SqliteTelemetryStore
+
+
+@pytest.fixture
+def tmp_path():
+    # Keep test artifacts in the allowed tree, independent of the caller's cwd and
+    # the existing pytest.ini's relative temp path. Do not change pytest options.
+    with TemporaryDirectory(prefix='ota-test-', dir=Path(__file__).resolve().parent) as directory:
+        yield Path(directory)
 
 
 class FakeTransport:

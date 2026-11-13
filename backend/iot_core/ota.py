@@ -90,7 +90,7 @@ async def update(gw: DeviceGateway, device_id: str, files: dict[str, bytes], ver
             lambda event: went_offline.set() if event.device_id == device_id and not event.online else None)
         try:
             await _command(gw, device_id, "ota_commit", timeout_s=60)
-        except Exception:
+        except BaseException:  # including cancellation: never leak the listener
             unsubscribe()
             raise
     except Exception:

@@ -63,6 +63,7 @@ class SimDevice:
         self._rolled_back_from = None
         self._ota_boots = 0
         self._reboot_at = None
+        self._commands_ok = 0
 
     def _save(self) -> None:
         temporary = self._path.with_suffix(".tmp")
@@ -183,6 +184,7 @@ class SimDevice:
         fail("unknown OTA command", "unknown_command")
 
     def _install_update(self):
+        self._commands_ok = 0
         if self._ota_pending is not None:
             version, files, previous, old_files, fail = self._ota_pending
             self._ota_pending = None
@@ -194,6 +196,10 @@ class SimDevice:
         self._ota_rx = None
 
     def _finish_trial(self):
+        # A successful response after reboot proves that remote commands still work.
+        # Failed trials must still roll back even when commands cannot be handled.
+        if self._rollback is None and not self._commands_ok:
+            return
         if self._rollback is not None:
             self._rolled_back_from = self.fw
             self.fw, self.files = self._rollback
@@ -271,6 +277,7 @@ class SimDevice:
                 self._answer(envelope.id, code=p.ERR_UNKNOWN_COMMAND, message=str(name))
                 return
             self._answer(envelope.id, result=result)
+            self._commands_ok += 1
         except p.ProtocolError:
             logger.warning("Invalid message on %s", message.topic)
         except CommandFailed as exc:

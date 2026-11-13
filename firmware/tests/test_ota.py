@@ -203,3 +203,51 @@ def test_confirm_ok_is_noop(monkeypatch):
     assert Path(ota.OTA_FILE).read_bytes() == before
     assert (Path(ota.OLD_DIR) / "old.py").exists()
     assert loader.confirmed is False
+
+
+def test_abort_refused_after_commit_preserves_staged_files():
+    rx = ota.Receiver("v2", [entry()])
+    rx.chunk("app.py", 0, encoded(b"new"))
+    rx.commit("v1")
+    before = Path(ota.OTA_FILE).read_bytes()
+    with pytest.raises(ota.OtaError, match="already committed") as exc:
+        ota.abort()
+    assert exc.value.code == "ota_error"
+    assert (Path(ota.NEW_DIR) / "app.py").read_bytes() == b"new"
+    assert Path(ota.OTA_FILE).read_bytes() == before
+
+
+@pytest.mark.parametrize("offset", [0, 1])
+def test_partial_write_failure_removes_file_and_resets_progress(monkeypatch, offset):
+    rx = ota.Receiver("v2", [entry()])
+    if offset:
+        rx.chunk("app.py", 0, encoded(b"n"))
+    target = Path(ota.NEW_DIR) / "app.py"
+    class BrokenWrite:
+        def __enter__(self):
+            self.stream = open(target, "ab" if offset else "wb")
+            return self
+        def write(self, data):
+            self.stream.write(data[:1])
+            self.stream.flush()
+            raise OSError("partial flash write")
+        def __exit__(self, *args):
+            self.stream.close()
+    with monkeypatch.context() as patch:
+        patch.setattr(ota, "open", lambda *args: BrokenWrite(), raising=False)
+        with pytest.raises(OSError, match="partial flash write"):
+            rx.chunk("app.py", offset, encoded(b"new"[offset:]))
+    assert rx.progress() == {"app.py": 0}
+    assert not target.exists()
+    assert rx.chunk("app.py", 0, encoded(b"new")) == 3
+    rx.commit("v1")
+
+
+@pytest.mark.parametrize("data", ["!!!!", "YWJj!!!!", "YWJj\n", "YW$j"])
+def test_invalid_base64_characters_rejected_without_writing(data):
+    rx = ota.Receiver("v2", [entry(data=b"abcdef")])
+    with pytest.raises(ota.OtaError, match="base64") as exc:
+        rx.chunk("app.py", 0, data)
+    assert exc.value.code == "bad_args"
+    assert rx.progress() == {"app.py": 0}
+    assert not (Path(ota.NEW_DIR) / "app.py").exists()

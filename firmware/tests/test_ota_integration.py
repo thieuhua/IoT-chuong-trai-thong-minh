@@ -67,6 +67,19 @@ def test_failed_commit_keeps_receiver_and_does_not_reboot(ctx):
     assert not Path(ota.OTA_FILE).exists()
 
 
+def test_hash_mismatch_resumes_same_manifest_by_resending_whole_file(ctx):
+    begin(ctx)
+    rx = ctx.ota_rx
+    chunk(ctx, b"bad")
+    assert invoke(ctx, "ota_commit")["error"]["code"] == "ota_error"
+    assert rx.progress() == {"app.py": 0}
+    assert not (Path(ota.NEW_DIR) / "app.py").exists()
+    assert begin(ctx)["result"] == {"need": ["app.py"], "written": {"app.py": 0}}
+    assert ctx.ota_rx is rx
+    assert chunk(ctx)["result"]["written"] == 3
+    assert invoke(ctx, "ota_commit")["ok"] is True
+
+
 def test_abort_clears_receiver_and_staged_files_and_is_repeatable(ctx):
     put(Path(ota.APP_DIR) / "app.py", b"running")
     begin(ctx)
@@ -117,13 +130,21 @@ def test_low_flash_is_ota_error_through_dispatch(ctx, monkeypatch):
     assert ctx.ota_rx is None
 
 
+@pytest.mark.parametrize("handled", [False, True])
 @pytest.mark.parametrize("trial", [False, True])
 def test_session_confirms_once_after_online_deadline_and_republishes_meta(
-        ctx, monkeypatch, board_environment, trial):
+        ctx, monkeypatch, board_environment, trial, handled):
     save({"state": "trial" if trial else "ok", "boots": 1 if trial else 0, "version": "v2"})
     # Start far from boot: the deadline is measured from this connection's online time.
     board_environment[0] = 100000
     started = board_environment[0]
+    assert ctx.commands_ok == 0
+    assert invoke(ctx, "unknown")["ok"] is False
+    assert ctx.commands_ok == 0
+    if handled:
+        assert invoke(ctx, "ping")["ok"] is True
+        assert invoke(ctx, "ota_status")["ok"] is True
+        assert ctx.commands_ok == 2
     confirm_at = []
     original_confirm = ota.confirm
     def confirm():
@@ -143,11 +164,13 @@ def test_session_confirms_once_after_online_deadline_and_republishes_meta(
     monkeypatch.setattr(session, "pause", pause)
     with pytest.raises(OSError, match="end session test"):
         session.run(ctx)
-    assert confirm_at == ([started + session.OTA_CONFIRM_AFTER_MS] if trial else [])
+    assert confirm_at == ([started + session.OTA_CONFIRM_AFTER_MS] if trial and handled else [])
     client = MQTTClient.instances[-1]
     metas = [json.loads(payload)["data"] for topic, payload, retain, qos in client.publishes
              if topic.endswith(b"/meta")]
-    assert [meta["ota"] for meta in metas] == (["trial", "ok"] if trial else ["ok"])
+    assert [meta["ota"] for meta in metas] == (
+        ["trial", "ok"] if trial and handled else ["trial"] if trial else ["ok"])
+    assert ota.in_trial() is (trial and not handled)
     assert all(meta["fw"] == "v2" for meta in metas)
     assert ctx.meta_dirty is False
     assert client.sock.closed and ctx.link is None
