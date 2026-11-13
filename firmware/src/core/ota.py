@@ -181,6 +181,10 @@ class Receiver:
             raw = binascii.a2b_base64(data)
         except ValueError:
             raise OtaError("bad_args", "data is not base64")
+        # a2b_base64 silently skips invalid characters; a length check catches that early
+        # (commit would still reject the file by sha256).
+        if len(data) % 4 or len(raw) != len(data) // 4 * 3 - data[-2:].count("="):
+            raise OtaError("bad_args", "data is not valid base64")
         if info["written"] + len(raw) > info["size"]:
             raise OtaError("bad_args", "data beyond declared size of " + path)
         target = NEW_DIR + "/" + path

@@ -70,8 +70,13 @@ async def update(gw: DeviceGateway, device_id: str, files: dict[str, bytes], ver
                 piece = data[offset:offset + CHUNK_SIZE]
                 result = await _command(gw, device_id, "ota_chunk", {
                     "path": path, "offset": offset, "data": base64.b64encode(piece).decode()})
-                sent += result["written"] - offset
-                offset = result["written"]
+                written = result.get("written")
+                if type(written) is not int or not offset < written <= len(data):
+                    # Must advance and stay inside the file, or the loop would spin or skip data.
+                    raise CommandFailed("ota_error", f"{path}: device reported written={written!r} "
+                                                     f"after offset {offset} of {len(data)}")
+                sent += written - offset
+                offset = written
                 await _report(on_progress, stage="upload", sent=sent, total=total, path=path)
         await _report(on_progress, stage="commit")
         await _command(gw, device_id, "ota_commit", timeout_s=60)

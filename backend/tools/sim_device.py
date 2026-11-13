@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -15,18 +17,20 @@ import paho.mqtt.client as mqtt
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from iot_core import AuthMode, GatewayConfig
+from iot_core import AuthMode, CommandFailed, GatewayConfig
 from iot_core import protocol as p
 
 logger = logging.getLogger("sim_device")
 SENSORS = [{"name": "room", "driver": "dht11", "fields": {"temperature": "°C", "humidity": "%"}},
            {"name": "light", "driver": "bh1750", "fields": {"lux": "lx"}}]
-COMMANDS = ["ping", "get_info", "read", "set_interval", "reboot"]
+COMMANDS = ["ping", "get_info", "read", "set_interval", "reboot",
+            "ota_begin", "ota_chunk", "ota_commit", "ota_abort", "ota_status"]
 
 
 class SimDevice:
     def __init__(self, hw_id: str, host: str, port: int, bootstrap_password: str | None,
-                 state_dir: str | Path, retry_s: float = 10, interval_s: int = 10, auth: bool = True):
+                 state_dir: str | Path, retry_s: float = 10, interval_s: int = 10, auth: bool = True,
+                 confirm_delay_s: float = 3, reboot_delay_s: float = 1):
         self.hw_id = hw_id
         self.host = host
         self.port = port
@@ -47,6 +51,18 @@ class SimDevice:
         self.online = False
         self.login_refusals = 0
         self._boot = 0
+        self.fw = "0.1.0"
+        self.files: dict[str, bytes] = {}
+        self.fail_next_update = False
+        self.confirm_delay_s = confirm_delay_s
+        self.reboot_delay_s = reboot_delay_s
+        self._ota_state = "ok"
+        self._ota_rx = None
+        self._ota_pending = None
+        self._trial_at = None
+        self._rolled_back_from = None
+        self._ota_boots = 0
+        self._reboot_at = None
 
     def _save(self) -> None:
         temporary = self._path.with_suffix(".tmp")
@@ -75,8 +91,115 @@ class SimDevice:
                                     self._envelope(kind, data), qos=qos, retain=retain)
 
     def _meta(self) -> dict:
-        return dict(hw_id=self.hw_id, model="esp32-sim", fw="0.1.0", sensors=SENSORS,
-                    commands=COMMANDS, interval_s=self.interval_s)
+        return dict(hw_id=self.hw_id, model="esp32-sim", fw=self.fw, sensors=SENSORS,
+                    commands=COMMANDS, interval_s=self.interval_s, ota=self._ota_state)
+
+    def _ota_command(self, name: str, args: dict) -> dict:
+        def fail(message, code="ota_error"):
+            raise CommandFailed(code, message)
+
+        def receiving():
+            rx = self._ota_rx
+            if rx is None:
+                fail("no update in progress")
+            return rx
+
+        if name == "ota_begin":
+            version, entries = args.get("version"), args.get("files")
+            if self._ota_rx and self._ota_rx["version"] == version and self._ota_rx["manifest"] == entries:
+                rx = self._ota_rx
+            else:
+                self._ota_rx = None
+                if self._ota_state != "ok":
+                    fail("previous update is still " + self._ota_state)
+                if not isinstance(version, str) or not 1 <= len(version) <= 40:
+                    fail("invalid version", "bad_args")
+                if not isinstance(entries, list) or not 1 <= len(entries) <= 64:
+                    fail("invalid manifest", "bad_args")
+                specs = {}
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        fail("invalid file entry", "bad_args")
+                    path, size, digest = entry.get("path"), entry.get("size"), entry.get("sha256")
+                    if (not isinstance(path, str) or not path or len(path) > 64 or path.startswith("/")
+                            or ".." in path or "//" in path or path in ("main.py", "boot.py")
+                            or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789_-./" for c in path)
+                            or not path.endswith((".py", ".mpy", ".json")) or path in specs
+                            or type(size) is not int or size < 0 or not isinstance(digest, str) or len(digest) != 64):
+                        fail("invalid path/size/sha256", "bad_args")
+                    specs[path] = dict(size=size, sha256=digest)
+                if "app.py" not in specs:
+                    fail("update must contain app.py", "bad_args")
+                staged = {path: bytearray() for path, spec in specs.items()
+                          if path not in self.files or hashlib.sha256(self.files[path]).hexdigest() != spec["sha256"]}
+                rx = dict(version=version, manifest=entries, specs=specs, staged=staged)
+                self._ota_rx = rx
+            return {"need": [path for path in rx["staged"] if rx["specs"][path]["size"]],
+                    "written": {path: len(data) for path, data in rx["staged"].items()}}
+        if name == "ota_chunk":
+            rx = receiving()
+            path, offset, data = args.get("path"), args.get("offset"), args.get("data")
+            if not isinstance(path, str) or path not in rx["staged"] or type(offset) is not int or not isinstance(data, str):
+                fail("invalid chunk", "bad_args")
+            staged = rx["staged"][path]
+            if offset >= len(staged):
+                if offset != len(staged):
+                    fail("unexpected offset", "bad_args")
+                try:
+                    raw = base64.b64decode(data, validate=True)
+                except ValueError:
+                    fail("invalid base64", "bad_args")
+                if len(staged) + len(raw) > rx["specs"][path]["size"]:
+                    fail("data beyond declared size", "bad_args")
+                staged.extend(raw)
+            return {"path": path, "written": len(staged)}
+        if name == "ota_commit":
+            rx = receiving()
+            new_files = {}
+            for path, spec in rx["specs"].items():
+                data = bytes(rx["staged"][path]) if path in rx["staged"] else self.files[path]
+                if len(data) != spec["size"] or hashlib.sha256(data).hexdigest() != spec["sha256"]:
+                    fail("incomplete file or sha256 mismatch: " + path)
+                new_files[path] = data
+            # Config lives outside /app and survives a bundle which omits it.
+            if "config.json" in self.files and "config.json" not in new_files:
+                new_files["config.json"] = self.files["config.json"]
+            self._ota_pending = (rx["version"], new_files, self.fw, self.files, self.fail_next_update)
+            self.fail_next_update = False
+            self._ota_rx = None
+            self._ota_state = "committing"
+            self._reboot_at = time.monotonic() + 0.2
+            return {"version": rx["version"], "reboot": True}
+        if name == "ota_abort":
+            self._ota_rx = None
+            return {}
+        if name == "ota_status":
+            rx = self._ota_rx
+            return {"version": self.fw, "state": self._ota_state, "boots": self._ota_boots,
+                    "rolled_back_from": self._rolled_back_from,
+                    "receiving": None if rx is None else {"version": rx["version"],
+                        "need": [path for path in rx["staged"] if rx["specs"][path]["size"]],
+                        "written": {path: len(data) for path, data in rx["staged"].items()}}}
+        fail("unknown OTA command", "unknown_command")
+
+    def _install_update(self):
+        if self._ota_pending is not None:
+            version, files, previous, old_files, fail = self._ota_pending
+            self._ota_pending = None
+            self.fw, self.files = version, files
+            self._ota_state, self._ota_boots = "trial", 1
+            self._rolled_back_from = None
+            self._trial_at = time.monotonic() + self.confirm_delay_s
+            self._rollback = (previous, old_files) if fail else None
+        self._ota_rx = None
+
+    def _finish_trial(self):
+        if self._rollback is not None:
+            self._rolled_back_from = self.fw
+            self.fw, self.files = self._rollback
+        self._ota_state, self._ota_boots = "ok", 0
+        self._trial_at = None
+        self._publish(p.META, self._meta(), qos=1, retain=True)
 
     def _read(self, sensor: str | None = None) -> dict:
         readings = {"room": {"temperature": 24, "humidity": 61}, "light": {"lux": 120}}
@@ -120,7 +243,9 @@ class SimDevice:
             if not isinstance(args, dict):
                 self._answer(envelope.id, code=p.ERR_BAD_ARGS, message="args must be an object")
                 return
-            if name == "ping":
+            if name in COMMANDS and name.startswith("ota_"):
+                result = self._ota_command(name, args)
+            elif name == "ping":
                 result = {"uptime_s": int(time.monotonic() - self._boot_at)}
             elif name == "get_info":
                 result = dict(self._meta(), uptime_s=int(time.monotonic() - self._boot_at),
@@ -148,6 +273,8 @@ class SimDevice:
             self._answer(envelope.id, result=result)
         except p.ProtocolError:
             logger.warning("Invalid message on %s", message.topic)
+        except CommandFailed as exc:
+            self._answer(envelope.id, code=exc.code, message=exc.message)
         except Exception:
             logger.exception("Simulator command failed")
             if self._registered:
@@ -163,6 +290,7 @@ class SimDevice:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            self._install_update()
             self._boot += 1
             self._seq = 0
             self._boot_at = time.monotonic()
@@ -192,6 +320,8 @@ class SimDevice:
                     if rc != mqtt.MQTT_ERR_SUCCESS:
                         break
                     now = time.monotonic()
+                    if self.online and self._trial_at is not None and now >= self._trial_at:
+                        self._finish_trial()
                     if self._connected and self._registered and now >= next_telemetry:
                         self._publish(p.TELEMETRY, self._read(), qos=0)
                         next_telemetry = now + self.interval_s
@@ -218,7 +348,7 @@ class SimDevice:
                     self.login_refusals += 1
                     self._path.unlink(missing_ok=True)
                     self.device_id = None
-                self._stop.wait(1 if reboot else 0.2)
+                self._stop.wait(self.reboot_delay_s if reboot else 0.2)
 
 
 def main() -> None:
@@ -226,13 +356,17 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--env", default="../deployment/.env")
     parser.add_argument("--state-dir", default="data/sim")
+    parser.add_argument("--confirm-delay", type=float, default=3)
+    parser.add_argument("--fail-next-update", action="store_true")
     args = parser.parse_args()
     config = GatewayConfig.from_env(args.env)
     devices = [SimDevice(f"51a{i:09x}", config.broker_host, config.broker_port,
-                         config.bootstrap_password, args.state_dir, auth=config.auth_mode == AuthMode.DYNSEC)
+                         config.bootstrap_password, args.state_dir, auth=config.auth_mode == AuthMode.DYNSEC,
+                         confirm_delay_s=args.confirm_delay)
                for i in range(1, args.count + 1)]
     try:
         for device in devices:
+            device.fail_next_update = args.fail_next_update
             device.start()
         while True:
             time.sleep(1)

@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid import uuid4
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -36,10 +39,22 @@ async def lifespan(app: FastAPI):
     env_file = os.environ.get("IOT_ENV_FILE", str(Path(__file__).resolve().parents[2] / "deployment/.env"))
     async with DeviceGateway.from_config(GatewayConfig.from_env(env_file)) as gateway:
         app.state.gateway = gateway
-        yield
+        app.state.firmware_jobs = {}
+        app.state.firmware_tasks = set()
+        app.state.ota_listeners = set()
+        try:
+            yield
+        finally:
+            tasks = list(app.state.firmware_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 app = FastAPI(lifespan=lifespan)
+app.state.firmware_jobs = {}
+app.state.firmware_tasks = set()
+app.state.ota_listeners = set()
 
 
 async def error_response(request: Request, exc: Exception):
@@ -82,6 +97,61 @@ class ApproveBody(BaseModel):
 
 class RejectBody(BaseModel):
     reason: str = ""
+
+
+class FirmwareBody(BaseModel):
+    version: str = Field(min_length=1, max_length=40)
+    files: dict[str, str] = Field(min_length=1)
+    wait_confirm: bool = True
+
+
+async def run_firmware_job(app: FastAPI, job: dict, files: dict[str, bytes], wait_confirm: bool):
+    def progress(event):
+        job["progress"] = dict(event)
+        value = {**event, "job_id": job["job_id"], "device_id": job["device_id"]}
+        for listener in tuple(app.state.ota_listeners):
+            listener("ota", value)
+
+    try:
+        job["result"] = await app.state.gateway.update_firmware(
+            job["device_id"], files, job["version"], on_progress=progress, wait_confirm=wait_confirm)
+        job["state"] = "succeeded"
+    except asyncio.CancelledError:
+        job.update(state="failed", error="Firmware job cancelled on shutdown")
+        raise
+    except Exception as exc:
+        job.update(state="failed", error=str(exc) or type(exc).__name__)
+    finally:
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+@app.post("/devices/{device_id}/firmware", status_code=202)
+async def firmware(request: Request, device_id: str, body: FirmwareBody):
+    try:
+        files = {path: base64.b64decode(data, validate=True) for path, data in body.files.items()}
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(422, "files must contain valid base64") from exc
+    state = request.app.state
+    if any(job["device_id"] == device_id and job["state"] == "running"
+           for job in state.firmware_jobs.values()):
+        raise HTTPException(409, "Firmware job already running for this device")
+    job_id = uuid4().hex
+    job = dict(job_id=job_id, device_id=device_id, version=body.version, state="running",
+               progress=None, result=None, error=None, started_at=datetime.now(timezone.utc).isoformat(),
+               finished_at=None)
+    state.firmware_jobs[job_id] = job
+    task = asyncio.create_task(run_firmware_job(request.app, job, files, body.wait_confirm))
+    state.firmware_tasks.add(task)
+    task.add_done_callback(state.firmware_tasks.discard)
+    return {"job_id": job_id}
+
+
+@app.get("/firmware-jobs/{job_id}")
+async def firmware_job(request: Request, job_id: str):
+    job = request.app.state.firmware_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Unknown firmware job")
+    return public(job)
 
 
 @app.get("/health")
@@ -182,6 +252,7 @@ async def events(request: Request):
         unsubscribes = [subscribe(lambda value, kind=kind: enqueue(kind, value)) for kind, subscribe in (
             ("telemetry", gateway.on_telemetry), ("status", gateway.on_status_change),
             ("registration", gateway.on_registration), ("device", gateway.on_device_updated))]
+        request.app.state.ota_listeners.add(enqueue)
         try:
             while not await request.is_disconnected():
                 try:
@@ -190,6 +261,7 @@ async def events(request: Request):
                 except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
+            request.app.state.ota_listeners.discard(enqueue)
             for unsubscribe in unsubscribes:
                 unsubscribe()
 

@@ -58,6 +58,7 @@ class PWM:
 
 
 class Timer:
+    ONE_SHOT = 0
     PERIODIC = 1
 
     def __init__(self, id):
@@ -73,6 +74,8 @@ class Timer:
 
     def fire(self):
         if self.active:
+            if self.mode == self.ONE_SHOT:
+                self.active = False
             self.callback(self)
 
     def deinit(self):

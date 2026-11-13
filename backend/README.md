@@ -1,5 +1,20 @@
 # Backend IoT
 
+## Nạp firmware qua Wi-Fi
+
+Chạy từ `backend/` khi server và thiết bị đang online:
+
+```powershell
+.venv\Scripts\python.exe tools/ota_push.py --device esp32-xxxx --src ../firmware/src
+```
+
+Tool gửi các file `.py`/`.mpy`, bỏ `main.py` và `__pycache__`, chỉ gửi file thay đổi
+và chờ thiết bị xác nhận bản mới. Thêm `--with-config` để gửi `config.json`,
+`--version V` để đặt phiên bản, `--server http://127.0.0.1:8000` để chọn server.
+`--no-wait` vẫn chờ upload/commit hoàn tất nhưng bỏ bước chờ xác nhận sau reboot.
+REST trả `202` và `job_id`; xem tiến trình qua `GET /firmware-jobs/{job_id}`
+hoặc SSE `ota` tại `/events`. Mỗi thiết bị chỉ có một job đang chạy; job lưu trong RAM.
+
 Chạy các lệnh sau tại thư mục `backend/` với Python 3.11. Broker trong
 `deployment/` cần đang chạy; backend đọc mật khẩu từ `../deployment/.env`.
 

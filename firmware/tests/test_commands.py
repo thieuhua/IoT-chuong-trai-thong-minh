@@ -22,8 +22,11 @@ def test_ping_and_info(ctx):
     assert result["hw_id"] == ctx.identity.hw_id
     assert result["ip"] == "192.0.2.10" and result["rssi"] == -45
     assert result["mem_free"] > 0
+    assert result["ota"] == "ok"
+    assert ctx.meta()["ota"] == "ok"
     assert result["commands"] == ["ping", "get_info", "read", "set_interval",
-                                  "servo_set", "servo_sequence", "reboot"]
+                                  "servo_set", "servo_sequence", "ota_begin", "ota_chunk",
+                                  "ota_commit", "ota_abort", "ota_status", "reboot"]
 
 
 def test_read_all_and_one(ctx):
