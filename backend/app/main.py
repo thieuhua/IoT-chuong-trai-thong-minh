@@ -99,6 +99,9 @@ class RejectBody(BaseModel):
     reason: str = ""
 
 
+MAX_FINISHED_JOBS = 100
+
+
 class FirmwareBody(BaseModel):
     version: str = Field(min_length=1, max_length=40)
     files: dict[str, str] = Field(min_length=1)
@@ -139,6 +142,9 @@ async def firmware(request: Request, device_id: str, body: FirmwareBody):
     job = dict(job_id=job_id, device_id=device_id, version=body.version, state="running",
                progress=None, result=None, error=None, started_at=datetime.now(timezone.utc).isoformat(),
                finished_at=None)
+    finished = [key for key, old in state.firmware_jobs.items() if old["state"] != "running"]
+    for key in finished[:max(0, len(state.firmware_jobs) - MAX_FINISHED_JOBS)]:
+        del state.firmware_jobs[key]  # dicts keep insertion order: oldest finished jobs go first
     state.firmware_jobs[job_id] = job
     task = asyncio.create_task(run_firmware_job(request.app, job, files, body.wait_confirm))
     state.firmware_tasks.add(task)

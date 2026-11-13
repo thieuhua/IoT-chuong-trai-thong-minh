@@ -202,6 +202,8 @@ def dispatch(ctx, payload):
             raise CommandError(p.ERR_UNKNOWN_COMMAND, "unknown command: " + name)
         result = handler(ctx, args)
         response.update({"ok": True, "result": result})
+        # Proof that the whole cmd -> resp path works; an OTA trial only confirms after this.
+        ctx.commands_ok = getattr(ctx, "commands_ok", 0) + 1
     except CommandError as exc:
         response.update({"ok": False, "error": {"code": exc.code, "message": str(exc)}})
     except Exception as exc:

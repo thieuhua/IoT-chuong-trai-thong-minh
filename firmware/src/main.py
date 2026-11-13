@@ -1,7 +1,8 @@
 """Stable loader: never updated over the air. Installs staged OTA updates, runs /app, rolls back.
 
 /ota.json (always written via tmp + rename):
-  {"state": "ok" | "committing" | "trial", "boots": n, "version": "...", "prev": "...", "config": bool}
+  {"state": "ok" | "committing" | "trial" | "rolling_back", "boots": n, "version": "...",
+   "prev": "...", "config": bool}
 - committing: the app verified /app_new and asked for a swap. The loader performs it here, step by
   step and idempotently, so a power cut at any point just repeats the remaining steps.
 - trial: new version running. The app calls core.ota.confirm() once it has been online for a while.
@@ -22,7 +23,7 @@ OTA_FILE = "/ota.json"
 CONFIG = "/config.json"
 CONFIG_OLD = "/config.json.old"
 MAX_TRIAL_BOOTS = 2
-TRIAL_WDT_MS = 60000          # hang guard; the app feeds it through feed()
+TRIAL_WDT_MS = 120000         # hang guard; the app feeds it through feed()
 TRIAL_CONFIRM_MS = 300000     # runs but never confirms -> reset (and count a boot)
 
 wdt = None                    # read by the app: sys.modules["__main__"].wdt
@@ -84,6 +85,10 @@ def _install(state):
 
 
 def _rollback(state):
+    """Restore the previous app (and config). Journaled: a power cut resumes here next boot."""
+    if state.get("state") != "rolling_back":
+        state["state"] = "rolling_back"
+        save_state(state)
     print("OTA: version", state.get("version"), "failed; restoring", state.get("prev"))
     if _exists(OLD_DIR):
         _rmtree(APP_DIR)
@@ -96,7 +101,8 @@ def _rollback(state):
 
 
 def _confirm_deadline(_timer):
-    if not confirmed:
+    # Soft (scheduled) callback: reading the file is fine and covers a missed RAM flag.
+    if not confirmed and load_state().get("state") == "trial":
         print("OTA: trial not confirmed in time; resetting")
         machine.reset()
 
@@ -104,6 +110,9 @@ def _confirm_deadline(_timer):
 def check_ota():
     global wdt, _timer
     state = load_state()
+    if state.get("state") == "rolling_back":
+        _rollback(state)
+        return load_state()
     if state.get("state") == "committing":
         _install(state)
     if state.get("state") != "trial":
@@ -128,7 +137,12 @@ def check_ota():
 
 def main():
     try:
-        check_ota()
+        try:
+            check_ota()
+        except Exception as exc:
+            # Never let OTA bookkeeping keep the app (and with it remote updates) from starting.
+            sys.print_exception(exc)
+            print("OTA: state handling failed; starting the app anyway")
         if _exists(APP_DIR) and APP_DIR not in sys.path:
             sys.path.insert(0, APP_DIR)
         import app

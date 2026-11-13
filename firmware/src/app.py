@@ -41,6 +41,7 @@ class App:
         self.auth_failures = 0
         self.backoff_s = 2
         self.ota_rx = None
+        self.commands_ok = 0
         # During an OTA trial the loader already started the (unstoppable) hardware WDT: reuse it
         # instead of creating a second one.
         loader_wdt = getattr(ota.loader_module(), "wdt", None)

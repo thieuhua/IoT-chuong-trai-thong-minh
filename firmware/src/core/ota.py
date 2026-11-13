@@ -190,12 +190,21 @@ class Receiver:
         target = NEW_DIR + "/" + path
         if offset == 0:
             _mkdirs(target)
-        with open(target, "ab" if offset else "wb") as stream:
-            stream.write(raw)
+        try:
+            with open(target, "ab" if offset else "wb") as stream:
+                stream.write(raw)
+        except OSError:
+            # A partial append cannot be trimmed (no truncate in MicroPython): restart this file.
+            self._reset_file(path)
+            raise
         info["written"] += len(raw)
         del raw
         gc.collect()
         return info["written"]
+
+    def _reset_file(self, path):
+        self.files[path]["written"] = 0
+        rmtree(NEW_DIR + "/" + path)
 
     def commit(self, running_version):
         """Verify /app_new, complete it with unchanged files, hand over to the loader."""
@@ -204,6 +213,8 @@ class Receiver:
                 if info["written"] != info["size"]:
                     raise OtaError("ota_error", "incomplete file " + path)
                 if sha256_file(NEW_DIR + "/" + path) != info["sha256"]:
+                    # Drop it so a resumed transfer (same ota_begin) sends it again.
+                    self._reset_file(path)
                     raise OtaError("ota_error", "sha256 mismatch for " + path)
             elif path != "config.json":
                 _copy(APP_DIR + "/" + path, NEW_DIR + "/" + path)
@@ -216,6 +227,10 @@ class Receiver:
 
 
 def abort():
+    if load_state().get("state") == "committing":
+        # The loader will install /app_new on the next boot; deleting it now would make the old
+        # code run as a "trial" of the new version.
+        raise OtaError("ota_error", "update already committed; it installs on reboot")
     rmtree(NEW_DIR)
 
 

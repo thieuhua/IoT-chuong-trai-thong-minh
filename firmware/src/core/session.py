@@ -66,8 +66,10 @@ def run(ctx):
             if time.ticks_diff(now, last_telemetry) >= ctx.interval_s * 1000:
                 ctx.publish(p.TELEMETRY, ctx.read_sensors())
                 last_telemetry = now
-            if trial and time.ticks_diff(now, online_since) >= OTA_CONFIRM_AFTER_MS:
-                # New OTA version has stayed online: keep it (the loader stops rolling back).
+            if (trial and ctx.commands_ok
+                    and time.ticks_diff(now, online_since) >= OTA_CONFIRM_AFTER_MS):
+                # New OTA version stayed online and answered a command (so it can still be
+                # updated remotely): keep it. The backend polls ota_status during the trial.
                 trial = False
                 if ota.confirm():
                     print("OTA: version", ctx.fw_version(), "confirmed")

@@ -46,9 +46,11 @@ async def _command(gw: DeviceGateway, device_id: str, name: str, args: dict[str,
     for attempt in range(1, RETRIES + 1):
         try:
             return await gw.send_command(device_id, name, args, timeout_s=timeout_s)
-        except CommandTimeout:
+        except (CommandTimeout, DeviceOffline):
+            # Commands are idempotent on the device; a short Wi-Fi blip is worth a retry.
             if attempt == RETRIES:
                 raise
+            await asyncio.sleep(2)
 
 
 async def update(gw: DeviceGateway, device_id: str, files: dict[str, bytes], version: str, *,
@@ -57,8 +59,11 @@ async def update(gw: DeviceGateway, device_id: str, files: dict[str, bytes], ver
     entries = manifest(files)
     await _report(on_progress, stage="begin", files=len(entries))
     begin = await _command(gw, device_id, "ota_begin", {"version": version, "files": entries}, 60)
-    need = list(begin.get("need", []))
-    done = dict(begin.get("written") or {})
+    need = list(begin.get("need") or [])
+    if any(path not in files for path in need):
+        raise CommandFailed("ota_error", f"device asked for unknown files: {need}")
+    done = {path: w for path, w in dict(begin.get("written") or {}).items()
+            if path in files and type(w) is int and 0 <= w <= len(files[path])}
     total = sum(len(files[p]) for p in need)
     sent = sum(min(done.get(p, 0), len(files[p])) for p in need)
     await _report(on_progress, stage="upload", sent=sent, total=total, need=need)
@@ -79,8 +84,17 @@ async def update(gw: DeviceGateway, device_id: str, files: dict[str, bytes], ver
                 offset = written
                 await _report(on_progress, stage="upload", sent=sent, total=total, path=path)
         await _report(on_progress, stage="commit")
-        await _command(gw, device_id, "ota_commit", timeout_s=60)
-    except BaseException:
+        # Subscribe before committing: a fast reboot can go offline and back between two polls.
+        went_offline = asyncio.Event()
+        unsubscribe = gw.on_status_change(
+            lambda event: went_offline.set() if event.device_id == device_id and not event.online else None)
+        try:
+            await _command(gw, device_id, "ota_commit", timeout_s=60)
+        except Exception:
+            unsubscribe()
+            raise
+    except Exception:
+        # Not on cancellation (server shutdown): the device discards it on its next reboot anyway.
         try:
             await gw.send_command(device_id, "ota_abort", timeout_s=5)
         except Exception:
@@ -88,17 +102,28 @@ async def update(gw: DeviceGateway, device_id: str, files: dict[str, bytes], ver
         raise
     result = {"device_id": device_id, "version": version, "files": len(entries),
               "sent_files": len(need), "sent_bytes": total}
-    if not wait_confirm:
-        return {**result, "state": "committed"}
-    return {**result, **await _wait_confirmed(gw, device_id, version, on_progress, confirm_timeout_s)}
+    try:
+        if not wait_confirm:
+            return {**result, "state": "committed"}
+        return {**result, **await _wait_confirmed(gw, device_id, version, on_progress,
+                                                  confirm_timeout_s, went_offline)}
+    finally:
+        unsubscribe()
 
 
 async def _wait_confirmed(gw: DeviceGateway, device_id: str, version: str,
-                          on_progress: Progress | None, timeout_s: float) -> dict[str, Any]:
-    """The device reboots, installs, comes back in trial mode and confirms after ~30 s online."""
+                          on_progress: Progress | None, timeout_s: float,
+                          went_offline: asyncio.Event) -> dict[str, Any]:
+    """The device reboots, installs, comes back in trial mode and confirms after ~30 s online
+    and a successful command; the ota_status polling below is that command."""
     await _report(on_progress, stage="reboot")
     deadline = time.monotonic() + timeout_s
-    await asyncio.sleep(3)  # let it go offline before polling
+    # Wait for the reboot to start, so a stale rolled_back_from from an earlier attempt of the
+    # same version is not mistaken for this one.
+    try:
+        await asyncio.wait_for(went_offline.wait(), min(30.0, timeout_s))
+    except TimeoutError:
+        pass
     while time.monotonic() < deadline:
         try:
             status = await gw.send_command(device_id, "ota_status", timeout_s=10)

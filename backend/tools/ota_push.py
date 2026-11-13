@@ -13,6 +13,15 @@ from urllib import error, request
 from urllib.parse import quote
 
 
+STAGE_TEXT = {
+    "begin": "device compares file hashes",
+    "commit": "device verifies sha256",
+    "reboot": "rebooting, loader installs the new /app",
+    "trial": "new version running on trial (confirms after ~30 s online)",
+    "done": "confirmed",
+}
+
+
 def bundle(source: Path, with_config: bool = False) -> dict[str, bytes]:
     if not source.is_dir():
         raise ValueError(f"Source directory does not exist: {source}")
@@ -61,16 +70,31 @@ def main(argv=None) -> int:
         server = args.server.rstrip("/")
         job = json_request(f"{server}/devices/{quote(args.device, safe='')}/firmware", {
             "version": version, "files": {p: base64.b64encode(d).decode("ascii") for p, d in files.items()},
-            "wait_confirm": not args.no_wait})
+            # Always true: the server job's ota_status polling is the command the device needs in
+            # order to confirm a trial. --no-wait only stops this CLI from watching.
+            "wait_confirm": True})
         print(f"Job {job['job_id']} version {version}", flush=True)
-        sent = total = 0
+        last = None
         while True:
             status = json_request(f"{server}/firmware-jobs/{job['job_id']}")
             progress = status.get("progress") or {}
-            sent, total = progress.get("sent", sent), progress.get("total", total)
-            percent = sent * 100 / total if total else 0
-            print(f"{progress.get('stage', status['state'])}: {sent}/{total} bytes ({percent:.1f}%)", flush=True)
+            stage = progress.get("stage", status["state"])
+            if stage == "upload":
+                sent, total = progress.get("sent", 0), progress.get("total", 0)
+                line = f"upload: {sent}/{total} bytes ({sent * 100 / total if total else 100:.0f}%)"
+            else:
+                line = f"{stage}: {STAGE_TEXT.get(stage, '')}".rstrip(": ")
+            if line != last:
+                print(line, flush=True)
+                last = line
+            if args.no_wait and stage in ("reboot", "trial") and status["state"] == "running":
+                print(f"Installed; the server keeps watching the trial (job {job['job_id']}).", flush=True)
+                return 0
             if status["state"] == "succeeded":
+                result = status.get("result") or {}
+                print(f"OK: {result.get('version', version)} {result.get('state', '')}, "
+                      f"sent {result.get('sent_files', '?')}/{result.get('files', '?')} files, "
+                      f"{result.get('sent_bytes', '?')} bytes", flush=True)
                 return 0
             if status["state"] == "failed":
                 print(status.get("error") or "Firmware job failed", file=sys.stderr)
