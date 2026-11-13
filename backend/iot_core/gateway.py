@@ -186,6 +186,20 @@ class DeviceGateway:
     async def reboot(self, device_id: str) -> None:
         await self.send_command(device_id, "reboot")
 
+    async def update_firmware(self, device_id: str, files: dict[str, bytes], version: str, *,
+                              on_progress: Callable[[dict[str, Any]], Any] | None = None,
+                              wait_confirm: bool = True) -> dict[str, Any]:
+        """Install new app code over Wi-Fi. `files` maps paths relative to firmware/src/
+        (e.g. "app.py", "core/session.py"; "config.json" replaces the device config) to bytes,
+        and is the complete new app: files not listed are dropped. Only files whose sha256
+        differs are sent. The device reboots into a trial and confirms after ~30 s online;
+        if the new code fails, its loader restores the previous version and this raises
+        CommandFailed("ota_error"). on_progress receives dicts with a "stage" key.
+        """
+        from . import ota
+        return await ota.update(self, device_id, files, version, on_progress=on_progress,
+                                wait_confirm=wait_confirm)
+
     # Stored data -----------------------------------------------------------------
     async def latest_telemetry(self, device_id: str) -> TelemetryRecord | None:
         await self.get_device(device_id)

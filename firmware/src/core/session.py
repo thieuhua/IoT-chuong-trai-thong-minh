@@ -2,12 +2,14 @@ import gc
 import machine
 import time
 import commands
+from core import ota
 from core import protocol as p
 from core import wifi
 from core.mqtt_link import NotAuthorised
 from core.runtime import pause
 
 AUTH_FAILURES_BEFORE_REVOKE = 3
+OTA_CONFIRM_AFTER_MS = 30000
 
 
 def run(ctx):
@@ -44,6 +46,8 @@ def run(ctx):
         gc.collect()
         last_telemetry = time.ticks_ms()
         last_gc = last_telemetry
+        online_since = last_telemetry
+        trial = ota.in_trial()
         while True:
             ctx.feed()
             if not wifi.connected():
@@ -62,6 +66,14 @@ def run(ctx):
             if time.ticks_diff(now, last_telemetry) >= ctx.interval_s * 1000:
                 ctx.publish(p.TELEMETRY, ctx.read_sensors())
                 last_telemetry = now
+            if (trial and ctx.commands_ok
+                    and time.ticks_diff(now, online_since) >= OTA_CONFIRM_AFTER_MS):
+                # New OTA version stayed online and answered a command (so it can still be
+                # updated remotely): keep it. The backend polls ota_status during the trial.
+                trial = False
+                if ota.confirm():
+                    print("OTA: version", ctx.fw_version(), "confirmed")
+                    ctx.meta_dirty = True
             if time.ticks_diff(now, last_gc) >= 30000:
                 gc.collect()
                 last_gc = now

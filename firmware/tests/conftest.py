@@ -1,4 +1,6 @@
 import gc
+import importlib.util
+import os
 from pathlib import Path
 import sys
 import time
@@ -10,8 +12,23 @@ sys.path[:0] = [str(FIRMWARE / "tests" / "stubs"), str(FIRMWARE / "src")]
 
 
 @pytest.fixture(autouse=True)
-def board_environment(monkeypatch):
-    # Every host write, including pytest temp files, stays inside firmware/.
+def board_environment(monkeypatch, tmp_path):
+    # Every host write, including pytest temp files, stays inside firmware/tests/.
+    import main
+    from core import ota
+    for module in (main, ota):
+        for constant, filename in (("APP_DIR", "app"), ("NEW_DIR", "app_new"),
+                                   ("OLD_DIR", "app_old"), ("OTA_FILE", "ota.json"),
+                                   ("CONFIG", "config.json"), ("CONFIG_FILE", "config.json"),
+                                   ("CONFIG_OLD", "config.json.old")):
+            if hasattr(module, constant):
+                monkeypatch.setattr(module, constant, (tmp_path / filename).as_posix())
+    monkeypatch.setattr(os, "rename", os.replace)
+    # statvfs is absent on Windows; use deterministic available flash in host tests.
+    monkeypatch.setattr(os, "statvfs", lambda path: (4096, 4096, 10000, 10000), raising=False)
+    if os.name == "nt":
+        # Board _mkdirs walks POSIX roots; Windows drive-letter paths need native parents.
+        monkeypatch.setattr(ota, "_mkdirs", lambda path: Path(path).parent.mkdir(parents=True, exist_ok=True))
     elapsed = [0]
     monkeypatch.setattr(time, "ticks_ms", lambda: elapsed[0] % (1 << 30), raising=False)
     monkeypatch.setattr(time, "ticks_add", lambda ticks, delta: (ticks + delta) % (1 << 30),
@@ -29,6 +46,17 @@ def board_environment(monkeypatch):
     import machine
     machine.reset_calls = 0
     yield elapsed
+
+
+@pytest.fixture
+def loader(board_environment, monkeypatch):
+    import main
+    spec = importlib.util.spec_from_file_location("_ota_test_loader", FIRMWARE / "src" / "main.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for name in ("APP_DIR", "NEW_DIR", "OLD_DIR", "OTA_FILE", "CONFIG", "CONFIG_OLD"):
+        monkeypatch.setattr(module, name, getattr(main, name))
+    return module
 
 
 @pytest.fixture

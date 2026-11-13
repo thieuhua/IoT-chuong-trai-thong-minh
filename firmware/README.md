@@ -1,15 +1,30 @@
 # Firmware ESP32 / MicroPython 1.29
 
 Firmware dùng `network.WLAN`, `umqtt.simple` và giao thức trong `docs/protocol.md`.
-Không cần `boot.py`. Toàn bộ nội dung `src/` được chép vào thư mục gốc board.
+Không cần `boot.py`. Trên board: `/main.py` là bộ khởi động cố định (`src/main.py`), code
+ứng dụng (mọi file khác trong `src/`) nằm trong `/app/`, dữ liệu ở thư mục gốc.
+
+## Nạp code
+
+**Lần đầu (hoặc cứu board) qua USB**, từ thư mục repo:
+`powershell -File firmware/tools/deploy.ps1 -Port COM3 -Config`.
+`-Config` chép cả `src/config.json`; `-Wipe` xóa `/device.json` và `/state.json` (phải duyệt
+đăng ký lại). Script xóa trạng thái OTA cũ, không cài hay flash MicroPython. Khi cắm USB vào
+laptop, rút dây 5V của servo (nguồn USB không đủ, board sẽ brownout).
+
+**Các lần sau qua Wi-Fi** (board cắm củ sạc, server tạm đang chạy):
+`cd backend; .venv\Scripts\python.exe tools\ota_push.py --device esp32-<hw_id>`.
+Chỉ file thay đổi được gửi; board khởi động lại, chạy bản mới ở chế độ thử và tự xác nhận sau
+khi online 30 s và trả lời được một lệnh. Bản mới crash/treo/không kết nối được thì sau 2 lần
+khởi động board tự quay về bản cũ (`ota_status.rolled_back_from`). `--with-config` gửi kèm
+`src/config.json`; sai Wi-Fi/broker cũng được rollback. `src/main.py` chỉ cập nhật được qua USB.
+
+## Cấu hình và đăng ký
 
 1. Chép `config.example.json` thành `src/config.json`; nhập Wi-Fi, MQTT host và
    mật khẩu bootstrap được quản trị viên cung cấp. Không commit file cấu hình thật.
-   DHT11 dùng GPIO23, chân DATA kéo lên; có thể chỉ giữ sensor `simulated` để thử không cần dây.
-2. Khi có board, từ thư mục repo chạy:
-   `powershell -File firmware/tools/deploy.ps1 -Port COM3 -Config`.
-   Các lần sau bỏ `-Config` để giữ cấu hình trên board. `-Wipe` xóa cả `/device.json`
-   và `/state.json`, cần duyệt đăng ký lại. Script không cài hay flash MicroPython.
+   DHT11 dùng GPIO14 (G34–39 chỉ đọc vào, không dùng được); servo SG90 ở G26 cần nguồn 5 V ≥ 2 A.
+2. Nạp lần đầu qua USB như trên.
 3. Lần khởi động đầu, xem `hw_id` trên serial và chờ quản trị viên duyệt đăng ký.
    Firmware lưu mật khẩu ngẫu nhiên một lần trong `/device.json`; khi được duyệt,
    chuyển sang tài khoản riêng, gửi online/meta và telemetry mỗi `interval_s`.
