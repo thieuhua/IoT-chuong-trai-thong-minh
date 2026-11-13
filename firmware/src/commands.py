@@ -105,6 +105,71 @@ def servo_sequence(ctx, args):
     return servo.state()
 
 
+def _ota_call(fn):
+    from core.ota import OtaError
+    try:
+        return fn()
+    except OtaError as exc:
+        raise CommandError(exc.code, str(exc))
+    except OSError as exc:
+        raise CommandError(p.ERR_OTA, "flash error: " + str(exc))
+
+
+@register("ota_begin")
+def ota_begin(ctx, args):
+    _args(args, ("version", "files"))
+    from core import ota
+    rx = ctx.ota_rx
+    if rx is not None and rx.same_manifest(args.get("version"), args.get("files")):
+        # Repeated begin (QoS 1 redelivery or backend resume): keep what was already received.
+        return {"need": rx.need(), "written": rx.progress()}
+    ctx.ota_rx = None
+    ctx.ota_rx = _ota_call(lambda: ota.Receiver(args.get("version"), args.get("files")))
+    return {"need": ctx.ota_rx.need(), "written": ctx.ota_rx.progress()}
+
+
+@register("ota_chunk")
+def ota_chunk(ctx, args):
+    _args(args, ("path", "offset", "data"))
+    if ctx.ota_rx is None:
+        raise CommandError(p.ERR_OTA, "no update in progress")
+    written = _ota_call(lambda: ctx.ota_rx.chunk(args.get("path"), args.get("offset"), args.get("data")))
+    return {"path": args.get("path"), "written": written}
+
+
+@register("ota_commit")
+def ota_commit(ctx, args):
+    _args(args)
+    if ctx.ota_rx is None:
+        raise CommandError(p.ERR_OTA, "no update in progress")
+    receiver = ctx.ota_rx
+    _ota_call(lambda: receiver.commit(ctx.fw_version()))
+    ctx.ota_rx = None
+    # The loader installs it on the next boot; the session loop answers first, publishes
+    # offline, then resets.
+    ctx.reboot_requested = True
+    return {"version": receiver.version, "reboot": True}
+
+
+@register("ota_abort")
+def ota_abort(ctx, args):
+    _args(args)
+    from core import ota
+    ctx.ota_rx = None
+    _ota_call(ota.abort)
+    return {}
+
+
+@register("ota_status")
+def ota_status(ctx, args):
+    _args(args)
+    from core import ota
+    state = ota.load_state()
+    return {"version": ctx.fw_version(), "state": state.get("state", "ok"),
+            "boots": state.get("boots", 0), "rolled_back_from": state.get("rolled_back_from"),
+            "receiving": ctx.ota_rx.status() if ctx.ota_rx else None}
+
+
 @register("reboot")
 def reboot(ctx, args):
     _args(args)

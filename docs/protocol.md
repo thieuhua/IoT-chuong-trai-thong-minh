@@ -153,7 +153,28 @@ Trạng thái servo: `{"angle": 40, "running": true, "angles": [0, 20, …, 180]
 Chuỗi góc chạy bằng hardware timer trên thiết bị (không phụ thuộc kết nối mạng) và lặp vô hạn; cấu hình
 khởi động nằm trong `config.json` (`sequence.autostart`). Thay đổi bằng lệnh không lưu qua lần khởi động lại.
 
-Mã lỗi: `unknown_command`, `bad_args`, `sensor_not_found`, `sensor_error`, `actuator_not_found`, `internal`.
+### Nạp code qua Wi-Fi (OTA)
+
+| Lệnh | `args` | `result` |
+| --- | --- | --- |
+| `ota_begin` | `{"version": "2026.11.13-1", "files": [{"path": "app.py", "size": 4210, "sha256": "…"}, …]}` | `{"need": ["app.py", …], "written": {"app.py": 0}}`: file nào khác hash hiện tại thì cần gửi |
+| `ota_chunk` | `{"path": "app.py", "offset": 0, "data": "<base64 ≤ 2048 byte>"}` | `{"path", "written"}`; gửi lại cùng `offset` chỉ được trả lời lại, không ghi trùng |
+| `ota_commit` | — | `{"version", "reboot": true}`; thiết bị kiểm sha256 rồi khởi động lại để cài |
+| `ota_abort` | — | `{}`; xóa phần đã nhận |
+| `ota_status` | — | `{"version", "state": "ok"\|"trial"\|"committing", "boots", "rolled_back_from", "receiving"}` |
+
+- `files` là **toàn bộ** app mới (đường dẫn tương đối so với `firmware/src/`, trừ `main.py`); file không có
+  trong danh sách sẽ bị bỏ. `config.json` là file duy nhất được ghi ra ngoài `/app` (vào `/config.json`).
+- Bố cục trên board: `/main.py` là bộ khởi động cố định (chỉ nạp qua USB), code ứng dụng trong `/app/`,
+  dữ liệu (`config.json`, `device.json`, `state.json`, `ota.json`) ở thư mục gốc.
+- Sau `ota_commit`, bộ khởi động đổi `/app_new` → `/app` (giữ bản cũ ở `/app_old`), chạy bản mới ở chế độ
+  **thử** (`meta.ota = "trial"`): hardware WDT 60 s chống treo, và bản mới phải online 30 s để tự xác nhận
+  trong 300 s. Không xác nhận được sau 2 lần khởi động thì tự quay về bản cũ (và config cũ);
+  `ota_status.rolled_back_from` cho biết.
+- Không nhận `ota_begin` mới khi bản trước còn ở `trial`/`committing`.
+- `meta.fw` là phiên bản OTA đang chạy; `meta.ota` là trạng thái (`ok`/`trial`).
+
+Mã lỗi: `unknown_command`, `bad_args`, `sensor_not_found`, `sensor_error`, `actuator_not_found`, `ota_error`, `internal`.
 Thêm lệnh mới: khai báo ở bảng này, đăng ký handler trong `firmware/src/commands.py`, thêm hàm tiện ích trong `DeviceGateway` nếu cần.
 
 ## 8. Quyền trên broker (Mosquitto Dynamic Security)
@@ -180,3 +201,5 @@ Chế độ `AUTH_MODE=none` (giống demo cũ) bỏ toàn bộ phần này: bro
 - `hw_id` là địa chỉ MAC, có thể bị giả mạo. Vì vậy mặc định cần admin duyệt; `AUTO_APPROVE` chỉ dành cho phát triển.
 - Tài khoản `bootstrap` dùng chung: lộ mật khẩu này chỉ cho phép gửi yêu cầu đăng ký và đọc trạng thái duyệt, không đọc được mật khẩu hay dữ liệu thiết bị khác. Thiết bị bootstrap có thể gửi request mang `hw_id` của máy khác; vì vậy admin duyệt theo `hw_id` in ra trên serial của board.
 - ESP32 dùng `umqtt.simple` với clean session: lệnh gửi khi thiết bị offline sẽ mất.
+- OTA chỉ được bảo vệ bởi ACL của broker (chỉ backend publish được `cmd`); chưa ký manifest, chưa TLS.
+  Ai có tài khoản `backend` là nạp được code vào thiết bị.

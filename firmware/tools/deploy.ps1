@@ -1,6 +1,7 @@
 param([string]$Port = "COM3", [switch]$Config, [switch]$Wipe)
-# Copy firmware/src to the board root in ONE mpremote session (each new connection resets the
-# board), verify every file by SHA-256, then reset so main.py starts.
+# USB install (first time, or recovery): src/main.py (the loader) goes to the board root, every
+# other file to /app. Done in ONE mpremote session (each new connection resets the board), every
+# file verified by SHA-256, then reset. Later updates go over Wi-Fi: backend/tools/ota_push.py.
 $ErrorActionPreference = "Stop"
 $firmwareRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $firmwareRoot
@@ -12,7 +13,9 @@ if ($Config -and -not (Test-Path -LiteralPath (Join-Path $sourceRoot "config.jso
 }
 
 $files = @(Get-ChildItem -LiteralPath $sourceRoot -Filter "*.py" -File -Recurse | ForEach-Object {
-    [pscustomobject]@{ Local = $_.FullName; Remote = "/" + $_.FullName.Substring($sourceRoot.Length + 1).Replace('\', '/') }
+    $relative = $_.FullName.Substring($sourceRoot.Length + 1).Replace('\', '/')
+    $remote = if ($relative -eq "main.py") { "/main.py" } else { "/app/" + $relative }
+    [pscustomobject]@{ Local = $_.FullName; Remote = $remote }
 })
 if ($Config) {
     $files += [pscustomobject]@{ Local = (Join-Path $sourceRoot "config.json"); Remote = "/config.json" }
@@ -23,9 +26,13 @@ $remoteArgs = @("connect", $Port)
 if ($Wipe) {
     $remoteArgs += @("exec", "import os`nfor p in ('/device.json', '/state.json'):`n try:`n  os.remove(p)`n except OSError as e:`n  if e.args[0] != 2: raise", "+")
 }
-# Every package directory under src/ (core, sensors, actuators, ...) must exist before copying.
+# A USB install replaces any OTA state, and app files from the old root layout must go so they
+# cannot shadow /app.
+$cleanup = "import os`ndef rm(p):`n try:`n  if os.stat(p)[0] & 0x4000:`n   for n in os.listdir(p): rm(p + '/' + n)`n   os.rmdir(p)`n  else: os.remove(p)`n except OSError: pass`nfor p in ('/app', '/app_new', '/app_old', '/ota.json', '/ota.json.tmp', '/app.py', '/commands.py', '/core', '/sensors', '/actuators'): rm(p)"
+$remoteArgs += @("exec", $cleanup, "+")
+# Every package directory (app, app/core, app/sensors, ...) must exist before copying.
 $dirs = @($files | ForEach-Object { $_.Remote.Substring(0, $_.Remote.LastIndexOf('/')) } |
-    Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { "'" + $_ + "'" })
+    Where-Object { $_ } | Sort-Object -Unique | Sort-Object Length | ForEach-Object { "'" + $_ + "'" })
 if ($dirs.Count -gt 0) {
     # Build the string first: inside @(...) the comma binds tighter than +.
     $mkdir = "import os`nfor p in (" + ($dirs -join ",") + ",):`n try:`n  os.mkdir(p)`n except OSError as e:`n  if e.args[0] != 17: raise"

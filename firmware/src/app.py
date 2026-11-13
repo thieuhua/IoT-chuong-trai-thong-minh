@@ -4,7 +4,7 @@ import machine
 import time
 import commands
 from core import protocol as p
-from core import provisioning, session, wifi
+from core import ota, provisioning, session, wifi
 from core.clock import Clock
 from core.identity import Identity
 from core.mqtt_link import MQTTLink, NotAuthorised
@@ -40,10 +40,21 @@ class App:
         self.meta_dirty = False
         self.auth_failures = 0
         self.backoff_s = 2
+        self.ota_rx = None
+        # During an OTA trial the loader already started the (unstoppable) hardware WDT: reuse it
+        # instead of creating a second one.
+        loader_wdt = getattr(ota.loader_module(), "wdt", None)
         timeout = config.get("watchdog_s", 0)
-        self.watchdog = machine.WDT(timeout=timeout * 1000) if timeout > 0 else None
+        if loader_wdt is not None:
+            self.watchdog = loader_wdt
+        else:
+            self.watchdog = machine.WDT(timeout=timeout * 1000) if timeout > 0 else None
         print("ESP32 hw_id=%s fw=%s mem_free=%s" %
-              (self.identity.hw_id, FW_VERSION, gc.mem_free()))
+              (self.identity.hw_id, self.fw_version(), gc.mem_free()))
+
+    def fw_version(self):
+        """Version installed by OTA (from /ota.json), else the version built into this code."""
+        return ota.current_version(FW_VERSION)
 
     def feed(self):
         if self.watchdog:
@@ -71,7 +82,8 @@ class App:
         return time.ticks_diff(time.ticks_ms(), self.started_at) // 1000
 
     def meta(self):
-        result = {"hw_id": self.identity.hw_id, "model": "esp32", "fw": FW_VERSION,
+        result = {"hw_id": self.identity.hw_id, "model": "esp32", "fw": self.fw_version(),
+                  "ota": ota.load_state().get("state", "ok"),
                   "sensors": [sensor.meta() for sensor in self.sensors],
                   "commands": list(commands.REGISTRY), "interval_s": self.interval_s}
         if self.actuators:
