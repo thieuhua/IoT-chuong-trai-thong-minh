@@ -14,9 +14,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+
+try:
+    from vision import CameraStreamer
+except ImportError:
+    CameraStreamer = None
 
 from iot_core import (BrokerAuthError, CommandFailed, CommandTimeout, DeviceGateway,
                       DeviceNotFound, DeviceOffline, GatewayConfig, InvalidState,
@@ -52,9 +58,56 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.state.firmware_jobs = {}
 app.state.firmware_tasks = set()
 app.state.ota_listeners = set()
+
+camera_streamer = CameraStreamer(source=0, allow_person=False, motionless_sec=40.0) if CameraStreamer else None
+
+# Hệ thống Quản lý người dùng & Phân quyền theo Đề bài Đồ án (Mục 4.4.a)
+# Gồm 3 vai trò: Quản trị viên (admin), Người vận hành (operator), Người xem (viewer)
+USERS = {
+    "admin": {
+        "username": "admin",
+        "name": "Quản Trị Viên Hệ Thống",
+        "role": "admin",
+        "password": "admin123",
+        "permissions": ["control", "manage_devices", "view", "manage_users"]
+    },
+    "operator": {
+        "username": "operator",
+        "name": "Chủ Trại / Người Vận Hành",
+        "role": "operator",
+        "password": "operator123",
+        "permissions": ["control", "view"]
+    },
+    "viewer": {
+        "username": "viewer",
+        "name": "Người Giám Sát / Khách",
+        "role": "viewer",
+        "password": "viewer123",
+        "permissions": ["view"]
+    }
+}
+
+# Hệ thống Cảnh báo & Quy tắc ngưỡng (Mục 4.4.d)
+ALERTS: list[dict] = []
+
+
+ALERT_RULES = {
+    "temp_max": 30.0,
+    "humidity_min": 55.0,
+    "motionless_sec": 40.0
+}
+
+
 
 
 async def error_response(request: Request, exc: Exception):
@@ -273,3 +326,121 @@ async def events(request: Request):
                 unsubscribe()
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+class CameraConfigBody(BaseModel):
+    source: str | int | None = None
+    allow_person: bool | None = None
+    motionless_sec: float | None = None
+    moving_threshold: float | None = None
+
+
+@app.get("/camera/feed")
+async def camera_feed():
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    if not camera_streamer.running:
+        camera_streamer.start()
+    return StreamingResponse(
+        camera_streamer.generate_mjpeg(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/camera/status")
+async def camera_status():
+    if not camera_streamer:
+        return {"is_available": False, "state": "unavailable"}
+    return {
+        "is_available": True,
+        **camera_streamer.get_latest_snapshot(),
+        "config": {
+            "source": camera_streamer.source,
+            "allow_person": camera_streamer.allow_person,
+            "motionless_sec": camera_streamer.motionless_sec,
+            "moving_threshold": camera_streamer.moving_threshold,
+        },
+    }
+
+
+@app.post("/camera/start")
+async def camera_start():
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    camera_streamer.start()
+    return {"ok": True, "running": True}
+
+
+@app.post("/camera/stop")
+async def camera_stop():
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    camera_streamer.stop()
+    return {"ok": True, "running": False}
+
+
+@app.post("/camera/config")
+async def camera_config(body: CameraConfigBody):
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    camera_streamer.update_config(
+        allow_person=body.allow_person,
+        motionless_sec=body.motionless_sec,
+        moving_threshold=body.moving_threshold,
+        source=body.source,
+    )
+    return {"ok": True, "status": camera_streamer.get_latest_snapshot()}
+
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/login")
+async def login(body: LoginBody):
+    user = USERS.get(body.username)
+    if not user or user["password"] != body.password:
+        raise HTTPException(401, "Tên đăng nhập hoặc mật khẩu không đúng")
+    return {
+        "username": user["username"],
+        "name": user["name"],
+        "role": user["role"],
+        "permissions": user["permissions"],
+    }
+
+
+@app.get("/auth/users")
+async def list_users():
+    return [
+        {"username": u["username"], "name": u["name"], "role": u["role"], "permissions": u["permissions"]}
+        for u in USERS.values()
+    ]
+
+
+@app.get("/alerts")
+async def get_alerts():
+    return ALERTS
+
+
+@app.post("/alerts/{alert_id}/ack")
+async def acknowledge_alert(alert_id: str):
+    for a in ALERTS:
+        if a["id"] == alert_id:
+            a["status"] = "acknowledged"
+            return {"ok": True, "alert": a}
+    raise HTTPException(404, "Không tìm thấy cảnh báo")
+
+
+@app.get("/alerts/rules")
+async def get_alert_rules():
+    return ALERT_RULES
+
+
+@app.post("/alerts/rules")
+async def update_alert_rules(rules: dict[str, float]):
+    ALERT_RULES.update(rules)
+    return {"ok": True, "rules": ALERT_RULES}
+
+

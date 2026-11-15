@@ -5,7 +5,6 @@ services:
     image: eclipse-mosquitto:2.0.22
     entrypoint: ["/bin/sh", "/mosquitto/entrypoint.sh"]
     env_file: .env
-    # All host interfaces: needed for ESP32 on the LAN. Development only.
     ports:
       - "1883:1883"
     volumes:
@@ -30,6 +29,34 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - IOT_ENV_FILE=/app/deployment/.env
+      - IOT_DB_PATH=/app/data/iot.sqlite3
+      - MQTT_HOST=mosquitto
+    volumes:
+      - ../backend/data:/app/data
+      - ../deployment/.env:/app/deployment/.env:ro
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
 
 volumes:
   mosquitto-data:
