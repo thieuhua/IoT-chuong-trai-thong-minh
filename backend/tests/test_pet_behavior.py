@@ -92,6 +92,24 @@ def test_absent_timeout():
     assert s_absent.state == BehaviorState.ABSENT
 
 
+def test_camera_streamer_snapshot_and_config():
+    from vision.streamer import CameraStreamer
+    streamer = CameraStreamer(source=0, allow_person=False, motionless_sec=40.0, moving_threshold=25.0)
+    assert not streamer.running
+    snap = streamer.get_latest_snapshot()
+    assert snap["is_running"] is False
+    assert snap["state"] == "absent"
+
+    streamer.update_config(motionless_sec=15.0, moving_threshold=30.0)
+    assert streamer.motionless_sec == 15.0
+    assert streamer.moving_threshold == 30.0
+
+    # Test MJPEG generator yields multipart frames
+    gen = streamer.generate_mjpeg()
+    first_frame = next(gen)
+    assert b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" in first_frame
+
+
 if __name__ == "__main__":
     test_initial_state_absent()
     print("PASS: test_initial_state_absent")
