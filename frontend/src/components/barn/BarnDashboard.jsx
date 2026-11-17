@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   apiGetBarns,
+  apiGetDeviceLatestTelemetry,
   apiGetDeviceReadings,
   apiGetDeviceTelemetry,
   apiSendBarnCommand,
@@ -47,18 +48,52 @@ export default function BarnDashboard({ devices, onNotify }) {
     let isMounted = true;
     const fetchTelemetry = async () => {
       try {
-        const readings = await apiGetDeviceReadings(selectedDeviceId);
-        if (!isMounted) return;
-
         let temp = null;
         let hum = null;
-        for (const key of Object.keys(readings)) {
-          const s = readings[key];
-          if (s.temp !== undefined) temp = s.temp;
-          if (s.temperature !== undefined) temp = s.temperature;
-          if (s.hum !== undefined) hum = s.hum;
-          if (s.humidity !== undefined) hum = s.humidity;
+
+        const dev = devices.find((d) => d.device_id === selectedDeviceId);
+        const isOnline = dev ? dev.online : true;
+
+        if (isOnline) {
+          try {
+            const readings = await apiGetDeviceReadings(selectedDeviceId);
+            const vals = readings.values || readings || {};
+            for (const key of Object.keys(vals)) {
+              const s = vals[key];
+              if (!s || typeof s !== 'object') continue;
+              if (s.temp !== undefined) temp = s.temp;
+              if (s.temperature !== undefined) temp = s.temperature;
+              if (s.hum !== undefined) hum = s.hum;
+              if (s.humidity !== undefined) hum = s.humidity;
+            }
+          } catch (readErr) {
+            // Thiết bị có thể vừa offline, fallback sang dữ liệu lưu gần nhất
+            const latest = await apiGetDeviceLatestTelemetry(selectedDeviceId).catch(() => null);
+            const vals = latest?.readings?.values || {};
+            for (const key of Object.keys(vals)) {
+              const s = vals[key];
+              if (!s || typeof s !== 'object') continue;
+              if (s.temp !== undefined) temp = s.temp;
+              if (s.temperature !== undefined) temp = s.temperature;
+              if (s.hum !== undefined) hum = s.hum;
+              if (s.humidity !== undefined) hum = s.humidity;
+            }
+          }
+        } else {
+          // Khi thiết bị offline, không gửi lệnh MQTT trực tiếp (tránh 409 Conflict)
+          const latest = await apiGetDeviceLatestTelemetry(selectedDeviceId).catch(() => null);
+          const vals = latest?.readings?.values || {};
+          for (const key of Object.keys(vals)) {
+            const s = vals[key];
+            if (!s || typeof s !== 'object') continue;
+            if (s.temp !== undefined) temp = s.temp;
+            if (s.temperature !== undefined) temp = s.temperature;
+            if (s.hum !== undefined) hum = s.hum;
+            if (s.humidity !== undefined) hum = s.humidity;
+          }
         }
+
+        if (!isMounted) return;
         setCurrentReadings({ temp, hum });
 
         const history = await apiGetDeviceTelemetry(selectedDeviceId, 12);

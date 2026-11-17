@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+logger = logging.getLogger("vision.detector")
 
 # Đảm bảo Ultralytics không ghi vào thư mục cấm trên hệ thống
 os.environ.setdefault("YOLO_CONFIG_DIR", "/tmp/Ultralytics")
 
 import numpy as np
-from ultralytics import YOLO
+
+try:
+    from ultralytics import YOLO
+except Exception as err:
+    YOLO = None
+    logger.warning("Khong the nap YOLO/PyTorch (%s). Tinh nang nhan dien AI se tam tat.", err)
 
 
 class PetDetector:
@@ -29,6 +37,16 @@ class PetDetector:
         conf_threshold: float = 0.45,
         allow_person: bool = False,
     ):
+        self.conf_threshold = conf_threshold
+        self.allow_person = allow_person
+        self.target_classes = [15, 16]
+        if self.allow_person:
+            self.target_classes.append(0)
+
+        if YOLO is None:
+            self.model = None
+            return
+
         if model_path is None:
             # Mặc định tìm model ở backend/yolov8n.pt hoặc trong thư mục vision
             candidates = [
@@ -43,14 +61,11 @@ class PetDetector:
             if model_path is None:
                 model_path = "yolov8n.pt"
 
-        self.model = YOLO(model_path)
-        self.conf_threshold = conf_threshold
-        self.allow_person = allow_person
-
-        # Lựa chọn class IDs cần nhận diện: 15=cat, 16=dog. Thêm 0=person nếu allow_person=True
-        self.target_classes = [15, 16]
-        if self.allow_person:
-            self.target_classes.append(0)
+        try:
+            self.model = YOLO(model_path)
+        except Exception as err:
+            logger.warning("Khong the khoi tao YOLO (%s)", err)
+            self.model = None
 
     def detect(self, frame: np.ndarray) -> Tuple[Optional[Tuple[int, int, int, int]], Optional[str], float]:
         """
@@ -58,6 +73,9 @@ class PetDetector:
         Trả về: (box=(x1, y1, x2, y2), class_name, confidence)
         Nếu có nhiều đối tượng, trả về đối tượng có độ tin cậy cao nhất.
         """
+        if self.model is None:
+            return None, None, 0.0
+
         results = self.model.predict(
             source=frame,
             classes=self.target_classes,

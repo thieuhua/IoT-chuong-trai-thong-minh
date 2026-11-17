@@ -221,6 +221,10 @@ export async function apiGetDeviceReadings(deviceId) {
   };
 }
 
+export async function apiGetDeviceLatestTelemetry(deviceId) {
+  return request(`/devices/${deviceId}/telemetry/latest`);
+}
+
 export async function apiGetDeviceTelemetry(deviceId, limit = 20) {
   const res = await request(`/devices/${deviceId}/telemetry?limit=${limit}`);
   return Array.isArray(res) ? res : [];
