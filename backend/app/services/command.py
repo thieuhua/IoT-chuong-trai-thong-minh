@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from .audit import record_change
 
 
 def send_command(
@@ -43,6 +44,7 @@ def send_command(
     )
 
     db.add(command)
+    record_change(db, user_id, "command.create", f"commands:{command.command_id}")
 
     try:
         db.commit()

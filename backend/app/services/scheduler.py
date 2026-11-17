@@ -8,6 +8,7 @@ from sqlalchemy import update
 
 from ..database import SessionLocal
 from .. import models
+from .audit import record_change
 
 logger = logging.getLogger(__name__)
 
@@ -84,24 +85,34 @@ def claim_event_sync(event_id: str):
             )
         )
 
-        db.commit()
-
         if result.rowcount != 1:
+            db.commit()
             return None
 
         event = db.get(models.ScheduledEvent, event_id)
 
         if event is None:
+            db.commit()
             return None
 
-        return {
+        record_change(
+            db,
+            event.created_by,
+            "scheduled_event.start",
+            f"scheduled_events:{event_id}",
+            "running"
+        )
+        event_data = {
             "device_id": event.device_id,
             "command_name": event.command_name,
             "args": event.args,
             "current_run_at": event.run_at,
             "repeat_type": event.repeat_type,
-            "duration_seconds": event.duration_seconds
+            "duration_seconds": event.duration_seconds,
+            "created_by": event.created_by
         }
+        db.commit()
+        return event_data
 
     except Exception:
         db.rollback()
@@ -161,6 +172,13 @@ def update_event_result_sync(
             event.status = "failed"
             event.error = error or "Command failed"
 
+        record_change(
+            db,
+            event_data.get("created_by"),
+            "scheduled_event.complete",
+            f"scheduled_events:{event_id}",
+            event.status
+        )
         db.commit()
 
     except Exception:
@@ -221,14 +239,14 @@ async def execute_event(app, event_id: str):
             )
 
         # 3. Send MQTT command and wait for result.
-        await asyncio.wait_for(
-            app.state.gateway.send_command(
-                event_data["device_id"],
-                event_data["command_name"],
-                event_data["args"]
-            ),
-            timeout=timeout
+        await app.state.gateway.send_command(
+            event_data["device_id"],
+            event_data["command_name"],
+            event_data["args"],
+            timeout_s=timeout
         )
+
+
 
         success = True
 

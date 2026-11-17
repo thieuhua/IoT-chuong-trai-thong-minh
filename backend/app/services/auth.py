@@ -5,8 +5,8 @@ from uuid import uuid4
 import uuid
 
 import bcrypt
-from jose import JWTError
 import jwt
+from jwt.exceptions import InvalidTokenError
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from pathlib import Path
 from .. import models
 
 from ..database import ENV_FILE as ENV_PATH  # deployment/.env (or IOT_ENV_FILE)
+from .audit import record_change
 
 if ENV_PATH.exists():
     with open(ENV_PATH, "r", encoding="utf-8") as file:
@@ -98,12 +99,12 @@ def decode_token(token: str):
             _secret_key(),
             algorithms=[ALGORITHM]
         )
-    except JWTError:
+
+    except InvalidTokenError:
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired token"
         )
-
 
 def get_current_user(db: Session, token: str):
     payload = decode_token(token)
@@ -200,6 +201,7 @@ def login(db: Session, body):
         ),
         revoked=0
     ))
+    record_change(db, current_user.id, "auth.login", f"users:{current_user.id}")
 
     db.commit()
 
@@ -256,6 +258,7 @@ def refresh_token(db: Session, body):
         ),
         revoked=0
     ))
+    record_change(db, user_id, "auth.refresh", f"users:{user_id}")
 
     db.commit()
 
@@ -279,6 +282,7 @@ def logout(db: Session, refresh_token_value: str, current_user):
         raise HTTPException(403, "Invalid session owner")
 
     session.revoked = 1
+    record_change(db, current_user.id, "auth.logout", f"auth_sessions:{session.jti}")
     db.commit()
 
     return {"message": "Logged out successfully"}
@@ -305,6 +309,12 @@ def change_password(db: Session, body, current_user):
         synchronize_session=False
     )
 
+    record_change(
+        db,
+        current_user.id,
+        "auth.password.change",
+        f"users:{current_user.id}"
+    )
     db.commit()
 
     return {"message": "Password changed successfully"}

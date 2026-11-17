@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from .audit import record_change
 
 
 def get_alerts(
@@ -62,12 +63,19 @@ def acknowledge_alert(
             "Cannot acknowledge a closed alert"
         )
 
+    changed = (
+        target_alert.status != "acknowledged"
+        or target_alert.handled_by != current_user.id
+        or target_alert.note != note
+    )
     target_alert.status = "acknowledged"
     target_alert.handled_by = current_user.id
     target_alert.note = note
 
-    db.commit()
-    db.refresh(target_alert)
+    if changed:
+        record_change(db, current_user.id, "alert.acknowledge", f"alerts:{alert_id}")
+        db.commit()
+        db.refresh(target_alert)
 
     return target_alert
 
@@ -96,6 +104,7 @@ def close_alert(
     target_alert.note = note
     target_alert.closed_at = datetime.utcnow()
 
+    record_change(db, current_user.id, "alert.close", f"alerts:{alert_id}")
     db.commit()
     db.refresh(target_alert)
 

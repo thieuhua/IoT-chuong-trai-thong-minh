@@ -135,6 +135,7 @@ class Device(Base):
     barn_id = Column(
         String(36),
         ForeignKey("barns.id", ondelete="SET NULL"),
+        unique=True
     )
 
     name = Column(String(255), default="")
@@ -382,7 +383,6 @@ class AuditLog(Base):
     target = Column(String(255))
 
     result = Column(String(100))
-    ip = Column(String(45))
 
     ts = Column(
         DateTime,

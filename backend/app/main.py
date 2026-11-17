@@ -205,22 +205,24 @@ def check_barn_access(
     db: Session
 ):
     if current_user.role == "Admin":
-        return True
+        barn = db.query(models.Barn).filter(models.Barn.id == barn_id).first()
+        if barn:
+            return True
+        raise HTTPException(status_code=404, detail="Barn not found")
 
-    assignment = db.query(
-        models.BarnAssignment
-    ).filter(
-        models.BarnAssignment.user_id == current_user.id,
-        models.BarnAssignment.barn_id == barn_id
-    ).first()
+    if current_user.role in {"Operator", "Viewer"}:
+        assignment = db.query(models.BarnAssignment).filter(
+            models.BarnAssignment.barn_id == barn_id,
+            models.BarnAssignment.user_id == current_user.id,
+            models.BarnAssignment.access_level == current_user.role
+        ).first()
+        if assignment:
+            return True
 
-    if not assignment:
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have access to this barn"
-        )
-
-    return True
+    raise HTTPException(
+        status_code=403,
+        detail="Permission denied"
+    )
 
 
 def check_device_write_access(
@@ -228,6 +230,12 @@ def check_device_write_access(
     db: Session,
     current_user: models.User
 ):
+    if current_user.role not in {"Admin", "Operator"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied"
+        )
+
     device = db.query(
         models.Device
     ).filter(
@@ -332,8 +340,12 @@ async def rename(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    check_device_write_access(device_id, db, current_user)
-    return public(await request.app.state.gateway.rename(device_id, body.name))
+    device = check_device_write_access(device_id, db, current_user)
+    result = public(await request.app.state.gateway.rename(device_id, body.name))
+    if device.name != body.name:
+        audit.record_change(db, current_user.id, "device.rename", f"devices:{device_id}")
+        db.commit()
+    return result
 
 
 @app.delete("/devices/{device_id}")
@@ -345,6 +357,8 @@ async def revoke(
 ):
     check_device_write_access(device_id, db, current_user)
     await request.app.state.gateway.revoke(device_id)
+    audit.record_change(db, current_user.id, "device.revoke", f"devices:{device_id}")
+    db.commit()
     return {"ok": True}
 
 
@@ -410,8 +424,14 @@ async def interval(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    check_device_write_access(device_id, db, current_user)
-    return {"interval_s": await request.app.state.gateway.set_interval(device_id, body.seconds)}
+    device = check_device_write_access(device_id, db, current_user)
+    interval_s = await request.app.state.gateway.set_interval(device_id, body.seconds)
+    if device.interval_s != interval_s:
+        audit.record_change(
+            db, current_user.id, "device.interval.update", f"devices:{device_id}"
+        )
+        db.commit()
+    return {"interval_s": interval_s}
 
 
 @app.get("/devices/{device_id}/telemetry")
@@ -449,9 +469,17 @@ async def approve(
     request: Request,
     hw_id: str,
     body: ApproveBody,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(require_roles("Admin"))
 ):
-    return public(await request.app.state.gateway.approve(hw_id, device_id=body.device_id, name=body.name))
+    result = public(await request.app.state.gateway.approve(
+        hw_id, device_id=body.device_id, name=body.name
+    ))
+    audit.record_change(
+        db, current_user.id, "registration.approve", f"registrations:{hw_id}"
+    )
+    db.commit()
+    return result
 
 
 @app.post("/registrations/{hw_id}/reject")
@@ -459,9 +487,15 @@ async def reject(
     request: Request,
     hw_id: str,
     body: RejectBody,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(require_roles("Admin"))
 ):
-    return public(await request.app.state.gateway.reject(hw_id, body.reason))
+    result = public(await request.app.state.gateway.reject(hw_id, body.reason))
+    audit.record_change(
+        db, current_user.id, "registration.reject", f"registrations:{hw_id}"
+    )
+    db.commit()
+    return result
 
 
 @app.get("/events")
@@ -609,7 +643,8 @@ def create_user(
 ):
     return user.create_user(
         db,
-        body
+        body,
+        current_user.id
     )
 
 
@@ -623,7 +658,7 @@ def update_user(
     if user_id == current_user.id and body.status == "locked":
         raise HTTPException(400, "Cannot lock your own account")
 
-    return user.update_user(db, user_id, body)
+    return user.update_user(db, user_id, body, current_user.id)
 
 # =========================================
 # 3. BARN MANAGEMENT
@@ -647,7 +682,7 @@ def create_barn(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_roles("Admin"))
 ):
-    return barn.create_barn(db, body)
+    return barn.create_barn(db, body, current_user.id)
 
 
 @app.put("/barns/{barn_id}/assignments")
@@ -657,45 +692,53 @@ def assign_barn(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_roles("Admin"))
 ):
-    return barn.assign_users(db, barn_id, body)
-# =========================================
-# 6. COMMANDS
-# =========================================
+    return barn.assign_users(db, barn_id, body, current_user.id)
 
-@app.post("/barns/{barn_id}/commands", status_code=201)
-def send_command(
+
+@app.delete("/barns/{barn_id}/assignments")
+def remove_barn_assignment(
     barn_id: str,
-    body: schemas.CommandCreateSchema,
-    request: Request,
+    body: schemas.BarnAssignmentDeleteSchema,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_roles("Admin"))
 ):
-    check_barn_access(
-        barn_id,
-        current_user,
-        db
-    )
-
-    result = command.send_command(
+    return barn.remove_user_assignment(
         db,
         barn_id,
-        current_user.id,
-        body
+        body.user_id,
+        current_user.id
     )
 
-    return {
-        "command_id": result.command_id,
-        "status": result.status
-    }
 
-
-@app.get("/barns/{barn_id}/commands")
-def get_commands(
+@app.get("/barns/{barn_id}/devices", response_model=list[schemas.DeviceResponse])
+def get_barn_devices(
     barn_id: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    return command.get_commands(db, barn_id)
+    check_barn_access(barn_id, current_user, db)
+    return barn.get_barn_devices(db, barn_id)
+
+
+@app.get("/barns/{barn_id}/assignments", response_model=list[schemas.BarnAssignmentResponse])
+def get_barn_assignments(
+    barn_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    check_barn_access(barn_id, current_user, db)
+    return barn.get_barn_assignments(db, barn_id)
+
+
+@app.get("/barns/{barn_id}/users", response_model=list[schemas.UserResponse])
+def get_barn_users(
+    barn_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    check_barn_access(barn_id, current_user, db)
+    return barn.get_barn_users(db, barn_id)
+
 # =========================================
 # 8. ALERTS
 # =========================================
@@ -807,7 +850,37 @@ async def websocket_endpoint(websocket: WebSocket):
 # =========================================
 # 10. Scheduled Events
 # =========================================
+"""
+Body example for creating a turn on relay scheduled event:
+{
+  "device_id": "_device_id_",
+  "command_name": "relay_set",
+  "args": {
+    "name": "_relay_name_",
+    "on": true,
+    "duration_ms": 60000
+  },
+  "run_at": "2026-11-17T12:00:00+07:00",
+  "duration_seconds": 10,
+  "repeat_type": "once"
+}
 
+repeat_type: "once" | "daily" | "weekly" | "monthly"
+"""
+"""
+đến giờ cho ăn, servo quay đến góc 90 độ.
+{
+  "device_id": "ESP32_001",
+  "command_name": "servo_set",
+  "args": {
+    "name": "feeder",
+    "angle": 90
+  },
+  "run_at": "2026-11-17T12:00:00+07:00",
+  "duration_seconds": 10,
+  "repeat_type": "once"
+}
+"""
 @app.post(
     "/barns/{barn_id}/scheduled-events",
     status_code=201,
@@ -817,7 +890,7 @@ def create_scheduled_event(
     barn_id: str,
     body: schemas.ScheduledEventCreateSchema,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_roles("Admin", "Operator"))
 ):
     check_barn_access(
         barn_id,
@@ -870,6 +943,10 @@ def create_scheduled_event(
 
     try:
         db.add(event)
+        db.flush()
+        audit.record_change(
+            db, current_user.id, "scheduled_event.create", f"scheduled_events:{event.id}"
+        )
         db.commit()
         db.refresh(event)
 
@@ -907,7 +984,7 @@ def get_scheduled_events(
 def cancel_scheduled_event(
     event_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_roles("Admin", "Operator"))
 ):
     event = db.query(
         models.ScheduledEvent
@@ -935,6 +1012,13 @@ def cancel_scheduled_event(
 
     event.status = "cancelled"
 
+    audit.record_change(
+        db,
+        current_user.id,
+        "scheduled_event.cancel",
+        f"scheduled_events:{event.id}",
+        event.status
+    )
     db.commit()
 
     return {

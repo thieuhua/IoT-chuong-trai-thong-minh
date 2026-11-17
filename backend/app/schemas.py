@@ -105,6 +105,10 @@ class BarnAssignmentSchema(BaseModel):
     assignments: list[BarnAssignmentItem]
 
 
+class BarnAssignmentDeleteSchema(BaseModel):
+    user_id: str
+
+
 class BarnAssignmentResponse(ORMBase):
     user_id: str
     barn_id: str
@@ -312,8 +316,6 @@ class AuditLogResponse(ORMBase):
     target: Optional[str] = None
 
     result: Optional[str] = None
-    ip: Optional[str] = None
-
     ts: Optional[datetime] = None
 
 
