@@ -1,0 +1,4 @@
+.pytest_cache/
+__pycache__/
+# Số đo của lần chạy gần nhất (tạo lại mỗi lần chạy); bản chốt cho báo cáo lưu tên có ngày.
+ket-qua/so-do-moi-nhat.*
