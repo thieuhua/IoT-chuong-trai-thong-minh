@@ -1,0 +1,14 @@
+stt,linh_kien,model,so_luong,cong_dung,gia_tham_khao_vnd
+1,Vi điều khiển,ESP32 DevKit 38 chân (ESP-WROOM-32),1,Chạy MicroPython; Wi-Fi; MQTT,100000-150000
+2,Cáp USB có dây dữ liệu,Theo cổng của board,1,Nạp firmware; xem log,15000-25000
+3,Cảm biến nhiệt độ độ ẩm,Module DHT11 3 chân (có trở kéo lên),1,Đo nhiệt độ 0-50 °C ±2 °C và độ ẩm,30000
+4,Quạt DC,Quạt 5 V cỡ 4010/5010/6025 dưới 0.3 A,1,Thông gió,25000-45000
+5,Công tắc quạt,Module MOSFET AOD4184 (hoặc module relay 5 V 1 kênh),1,ESP32 GPIO26 bật tắt quạt,15000-25000
+6,Diode,1N4007,1,Chống xung ngược của quạt,2000
+7,Tụ hóa,1000 µF 16 V,1,Giữ áp 5 V khi servo khởi động,5000
+8,Servo cho ăn,SG90,1,Mở đóng cửa xả thức ăn,35000-50000
+9,Nguồn chung,Củ sạc điện thoại 5 V 2 A + cáp Type-C,1,Cấp cho ESP32; quạt; servo,0-50000
+10,Module Type-C breakout,Có sẵn chân cắm,1,Đưa 5 V lên breadboard,10000-20000
+11,Breadboard,400 lỗ x2 (hoặc đế ra chân ESP32),2,Lắp mạch không hàn,20000-50000
+12,Dây Dupont,Đực-đực và đực-cái,1 bó mỗi loại,Nối dây,30000
+13,Dây kẹp cá sấu,1 đầu kẹp 1 đầu Dupont,1 bó,Nối dây trần của quạt,15000-25000
