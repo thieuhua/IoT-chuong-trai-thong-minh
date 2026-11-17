@@ -14,7 +14,9 @@ export function RoleBadge({ role }) {
 export function StatusPill({ status, label }) {
   const displayLabel =
     label ||
-    (status === 'active'
+    (status === 'open'
+      ? 'Đang mở'
+      : status === 'active'
       ? 'Hoạt động'
       : status === 'locked'
       ? 'Đã khóa'

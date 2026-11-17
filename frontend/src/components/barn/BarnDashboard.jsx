@@ -4,70 +4,97 @@ import {
   apiGetBarns,
   apiGetDeviceLatestTelemetry,
   apiGetDeviceTelemetry,
+  apiGetBarnCommands,
+  apiSendBarnCommand,
   apiSendDeviceCommand,
+  subscribeToEvents,
 } from '../../services/api';
 import ClimateCard from './ClimateCard';
 import TelemetryChart from './TelemetryChart';
 import EmptyState from '../common/EmptyState';
 
-export default function BarnDashboard({ devices, onNotify }) {
+export default function BarnDashboard({ barns: initialBarns = [], devices = [], onNotify }) {
   const { canControl } = useAuth();
-  const [barns, setBarns] = useState([]);
+  const [barns, setBarns] = useState(initialBarns);
   const [selectedBarnId, setSelectedBarnId] = useState('');
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
 
-  const [currentReadings, setCurrentReadings] = useState({ temp: null, hum: null });
+  const [currentReadings, setCurrentReadings] = useState({});
   const [chartData, setChartData] = useState([]);
+  const [commandHistory, setCommandHistory] = useState([]);
 
   useEffect(() => {
-    const fetchBarns = async () => {
-      try {
-        const res = await apiGetBarns();
-        setBarns(res);
-        if (res.length > 0 && !selectedBarnId) {
-          setSelectedBarnId(res[0].id);
+    if (initialBarns.length > 0) {
+      setBarns(initialBarns);
+      if (!selectedBarnId) setSelectedBarnId(initialBarns[0].id);
+    } else {
+      const fetchBarns = async () => {
+        try {
+          const res = await apiGetBarns();
+          setBarns(res);
+          if (res.length > 0 && !selectedBarnId) {
+            setSelectedBarnId(res[0].id);
+          }
+        } catch {
+          // Bỏ qua nếu chưa tải được danh sách chuồng
         }
-      } catch {
-        // Bỏ qua nếu chưa có dữ liệu chuồng
-      }
-    };
-    fetchBarns();
-  }, []);
+      };
+      fetchBarns();
+    }
+  }, [initialBarns]);
+
+  // Lọc thiết bị theo chuồng đã chọn (nếu có gán chuồng)
+  const barnDevices = selectedBarnId
+    ? devices.filter((d) => d.barn_id === selectedBarnId || !d.barn_id)
+    : devices;
 
   useEffect(() => {
-    if (devices && devices.length > 0 && !selectedDeviceId) {
+    if (barnDevices.length > 0) {
+      const exists = barnDevices.some((d) => d.device_id === selectedDeviceId);
+      if (!exists) {
+        setSelectedDeviceId(barnDevices[0].device_id);
+      }
+    } else if (devices.length > 0 && !selectedDeviceId) {
       setSelectedDeviceId(devices[0].device_id);
     } else if (!devices || devices.length === 0) {
-      // Không báo lỗi ở đây: App làm mới danh sách định kỳ nên sẽ spam thông báo.
-      // Giao diện đã hiện EmptyState khi chưa có thiết bị.
       setSelectedDeviceId('');
     }
-  }, [devices]);
+  }, [barnDevices, selectedDeviceId, devices]);
+
+  const currentDev = devices.find((d) => d.device_id === selectedDeviceId);
+  const isOnline = Boolean(currentDev?.online);
+
+  const fetchCommandHistory = async (barnId) => {
+    if (!barnId) return;
+    try {
+      const cmds = await apiGetBarnCommands(barnId);
+      setCommandHistory(cmds);
+    } catch {
+      // Bỏ qua lỗi tải lịch sử lệnh
+    }
+  };
+
+  useEffect(() => {
+    if (selectedBarnId) {
+      fetchCommandHistory(selectedBarnId);
+    }
+  }, [selectedBarnId]);
 
   useEffect(() => {
     if (!selectedDeviceId) return;
 
     let isMounted = true;
-    const fetchTelemetry = async () => {
+
+    // Tải dữ liệu lưu trữ gần nhất từ database (KHÔNG bắn lệnh MQTT read xuống ESP32)
+    const loadInitialTelemetry = async () => {
       try {
-        let temp = null;
-        let hum = null;
-
         const latest = await apiGetDeviceLatestTelemetry(selectedDeviceId).catch(() => null);
-        const vals = latest?.readings?.values || {};
-        for (const key of Object.keys(vals)) {
-          const s = vals[key];
-          if (!s || typeof s !== 'object') continue;
-          if (s.temp !== undefined) temp = s.temp;
-          if (s.temperature !== undefined) temp = s.temperature;
-          if (s.hum !== undefined) hum = s.hum;
-          if (s.humidity !== undefined) hum = s.humidity;
-        }
-
         if (!isMounted) return;
-        setCurrentReadings({ temp, hum });
 
-        const history = await apiGetDeviceTelemetry(selectedDeviceId, 12);
+        const vals = latest?.readings?.values || latest?.readings || {};
+        setCurrentReadings(vals);
+
+        const history = await apiGetDeviceTelemetry(selectedDeviceId, 12).catch(() => []);
         if (!isMounted) return;
 
         const mapped = history
@@ -76,12 +103,14 @@ export default function BarnDashboard({ devices, onNotify }) {
             const timeStr = `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
             let t = null;
             let h = null;
-            const vals = item.readings?.values || {};
-            for (const sName of Object.keys(vals)) {
-              if (vals[sName].temp !== undefined) t = vals[sName].temp;
-              if (vals[sName].temperature !== undefined) t = vals[sName].temperature;
-              if (vals[sName].hum !== undefined) h = vals[sName].hum;
-              if (vals[sName].humidity !== undefined) h = vals[sName].humidity;
+            const itemVals = item.readings?.values || item.readings || {};
+            for (const sName of Object.keys(itemVals)) {
+              const s = itemVals[sName];
+              if (!s || typeof s !== 'object') continue;
+              if (s.temp !== undefined) t = s.temp;
+              if (s.temperature !== undefined) t = s.temperature;
+              if (s.hum !== undefined) h = s.hum;
+              if (s.humidity !== undefined) h = s.humidity;
             }
             return { time: timeStr, temp: t, hum: h };
           })
@@ -90,21 +119,56 @@ export default function BarnDashboard({ devices, onNotify }) {
 
         setChartData(mapped);
       } catch (err) {
-        console.error('Lỗi tải telemetry:', err);
+        console.error('Lỗi tải dữ liệu telemetry ban đầu:', err);
       }
     };
 
-    fetchTelemetry();
-    const interval = setInterval(fetchTelemetry, 4000);
+    loadInitialTelemetry();
+
+    // Lắng nghe dữ liệu vi khí hậu theo thời gian thực qua Server-Sent Events (SSE)
+    const unsubscribeSSE = subscribeToEvents((type, data) => {
+      if (!isMounted) return;
+
+      if (type === 'telemetry' && data.device_id === selectedDeviceId) {
+        const vals = data.readings?.values || data.readings || {};
+        setCurrentReadings(vals);
+
+        const dt = new Date(data.received_at || Date.now());
+        const timeStr = `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
+        let t = null;
+        let h = null;
+        for (const sName of Object.keys(vals)) {
+          const s = vals[sName];
+          if (!s || typeof s !== 'object') continue;
+          if (s.temp !== undefined) t = s.temp;
+          if (s.temperature !== undefined) t = s.temperature;
+          if (s.hum !== undefined) h = s.hum;
+          if (s.humidity !== undefined) h = s.humidity;
+        }
+
+        if (t !== null || h !== null) {
+          setChartData((prev) => {
+            const next = [...prev, { time: timeStr, temp: t, hum: h }];
+            return next.length > 12 ? next.slice(-12) : next;
+          });
+        }
+      }
+    });
+
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      unsubscribeSSE();
     };
   }, [selectedDeviceId]);
 
-  const handleRelayToggle = async (channel, state) => {
+  const handleRelayToggle = async (on) => {
     if (!canControl) {
-      onNotify('Tài khoản không có quyền điều khiển thiết bị.', 'error');
+      onNotify('Lỗi 403 (Từ chối): Tài khoản không có quyền điều khiển thiết bị.', 'error');
+      return;
+    }
+
+    if (!isOnline) {
+      onNotify('Lỗi 409 (Xung đột): Thiết bị đang ngoại tuyến (Offline), không thể gửi lệnh.', 'error');
       return;
     }
 
@@ -114,10 +178,22 @@ export default function BarnDashboard({ devices, onNotify }) {
     }
 
     try {
-      await apiSendDeviceCommand(selectedDeviceId, 'relay_set', { on: state === 'on' });
-      onNotify(`Đã gửi lệnh bật/tắt quạt (${state})`);
+      const isOn = Boolean(on);
+      const payload = { on: isOn };
+
+      if (selectedDeviceId) {
+        await apiSendDeviceCommand(selectedDeviceId, 'relay_set', payload);
+      }
+      if (selectedBarnId) {
+        await apiSendBarnCommand(selectedBarnId, 'relay_set', payload).catch(() => {});
+      }
+
+      onNotify(`Đã gửi lệnh ${isOn ? 'bật' : 'tắt'} quạt`);
+      if (selectedBarnId) {
+        fetchCommandHistory(selectedBarnId);
+      }
     } catch (err) {
-      onNotify('Lỗi gửi lệnh: ' + err.message, 'error');
+      onNotify(err.message, 'error');
     }
   };
 
@@ -150,7 +226,7 @@ export default function BarnDashboard({ devices, onNotify }) {
                 onChange={(e) => setSelectedDeviceId(e.target.value)}
                 className="select-control"
               >
-                {devices.map((d) => (
+                {barnDevices.map((d) => (
                   <option key={d.device_id} value={d.device_id}>
                     {d.name || d.device_id} ({d.online ? 'Online' : 'Offline'})
                   </option>
@@ -168,12 +244,59 @@ export default function BarnDashboard({ devices, onNotify }) {
         ) : (
           <>
             <ClimateCard
+              device={currentDev}
               currentReadings={currentReadings}
+              isOnline={isOnline}
               onRelayToggle={handleRelayToggle}
             />
 
             <h3 className="section-subtitle">Biểu Đồ Theo Thời Gian</h3>
             <TelemetryChart chartData={chartData} />
+
+            <div style={{ marginTop: '28px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h3 className="section-subtitle" style={{ margin: 0 }}>Lịch Sử Lệnh Chuồng</h3>
+                {selectedBarnId && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => fetchCommandHistory(selectedBarnId)}
+                  >
+                    Làm mới lệnh
+                  </button>
+                )}
+              </div>
+
+              {commandHistory.length === 0 ? (
+                <p className="empty-state-text">Chưa có lệnh nào được phát xuống chuồng này.</p>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Thời Gian</th>
+                      <th>Lệnh</th>
+                      <th>Tham Số</th>
+                      <th>Thiết Bị</th>
+                      <th>Trạng Thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {commandHistory.slice(0, 5).map((cmd) => (
+                      <tr key={cmd.command_id || cmd.id}>
+                        <td>{cmd.issued_at ? new Date(cmd.issued_at).toLocaleString() : '--'}</td>
+                        <td><span className="log-action-tag">{cmd.action}</span></td>
+                        <td><code>{cmd.params ? JSON.stringify(cmd.params) : '--'}</code></td>
+                        <td><code>{cmd.device_id || '--'}</code></td>
+                        <td>
+                          <span className={cmd.status === 'executed' ? 'text-green' : cmd.status === 'pending' ? 'text-amber' : ''}>
+                            {cmd.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </>
         )}
       </div>

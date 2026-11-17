@@ -30,27 +30,31 @@ export default function AuditLogTable({ auditLogs, onRefresh }) {
           <table className="data-table">
             <thead>
               <tr>
+                <th>ID</th>
                 <th>Thời Gian</th>
                 <th>Người Dùng</th>
                 <th>Hành Động</th>
                 <th>Đối Tượng</th>
-                <th>Chi Tiết</th>
+                <th>Kết Quả</th>
+                <th>IP</th>
               </tr>
             </thead>
             <tbody>
               {pagedLogs.map((log) => (
                 <tr key={log.id}>
-                  <td>{new Date(log.created_at).toLocaleString()}</td>
-                  <td><code>{log.actor_username || 'Hệ thống'}</code></td>
+                  <td><code>#{log.id}</code></td>
+                  <td>{log.ts ? new Date(log.ts).toLocaleString() : (log.created_at ? new Date(log.created_at).toLocaleString() : '--')}</td>
+                  <td><code>{log.user_id || log.actor_username || 'Hệ thống'}</code></td>
                   <td>
                     <span className="log-action-tag">{log.action}</span>
                   </td>
-                  <td><code>{log.target_type}: {log.target_id || '--'}</code></td>
+                  <td><code>{log.target || (log.target_type ? `${log.target_type}: ${log.target_id}` : '--')}</code></td>
                   <td>
-                    <span className="log-detail-text">
-                      {log.detail ? JSON.stringify(log.detail) : '--'}
+                    <span className={log.result === 'success' || log.result === 'ok' ? 'text-green' : 'text-amber'}>
+                      {log.result || '--'}
                     </span>
                   </td>
+                  <td><code>{log.ip || '--'}</code></td>
                 </tr>
               ))}
             </tbody>

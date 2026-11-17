@@ -4,17 +4,23 @@ import Pagination from '../common/Pagination';
 import EmptyState from '../common/EmptyState';
 
 export default function PendingRegistrations({
-  registrations,
+  barns = [],
+  registrations = [],
   onRefresh,
   onApprove,
   onReject,
 }) {
   const { canManage } = useAuth();
   const [page, setPage] = useState(1);
+  const [assignedBarns, setAssignedBarns] = useState({});
   const pageSize = 6;
 
   const totalPages = Math.ceil(registrations.length / pageSize) || 1;
   const pagedRegistrations = registrations.slice((page - 1) * pageSize, page * pageSize);
+
+  const handleBarnChange = (hwId, barnId) => {
+    setAssignedBarns((prev) => ({ ...prev, [hwId]: barnId }));
+  };
 
   return (
     <div className="card">
@@ -38,8 +44,9 @@ export default function PendingRegistrations({
             <thead>
               <tr>
                 <th>Hardware ID</th>
+                <th>Model</th>
                 <th>IP Yêu Cầu</th>
-                <th>Chuồng</th>
+                <th>Gán Chuồng Khi Duyệt</th>
                 <th>Thời Gian</th>
                 <th>Thao Tác</th>
               </tr>
@@ -48,14 +55,31 @@ export default function PendingRegistrations({
               {pagedRegistrations.map((reg) => (
                 <tr key={reg.hw_id}>
                   <td><code>{reg.hw_id}</code></td>
+                  <td>{reg.model || 'esp32'}</td>
                   <td>{reg.requested_ip || 'DHCP'}</td>
-                  <td>{reg.barn_id ? `#${reg.barn_id}` : '--'}</td>
+                  <td>
+                    <select
+                      value={assignedBarns[reg.hw_id] || ''}
+                      onChange={(e) => handleBarnChange(reg.hw_id, e.target.value)}
+                      className="select-control select-sm"
+                      disabled={!canManage}
+                    >
+                      <option value="">-- Chọn chuồng --</option>
+                      {barns.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td>{new Date(reg.requested_at).toLocaleString()}</td>
                   <td>
                     <div className="action-buttons-row">
                       <button
                         className="btn btn-success btn-xs"
-                        onClick={() => onApprove(reg.hw_id)}
+                        onClick={() =>
+                          onApprove(reg.hw_id, null, '', assignedBarns[reg.hw_id] || null)
+                        }
                         disabled={!canManage}
                       >
                         Duyệt

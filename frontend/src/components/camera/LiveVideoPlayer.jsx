@@ -1,9 +1,13 @@
 import React from 'react';
+import { getStoredToken } from '../../services/api';
 
 export default function LiveVideoPlayer({
   cameraStatus,
   onToggleCamera,
 }) {
+  const token = getStoredToken();
+  const feedSrc = token ? `/camera/feed?token=${encodeURIComponent(token)}` : '/camera/feed';
+
   const getStateBadgeClass = (state) => {
     switch (state) {
       case 'walking':
@@ -34,7 +38,7 @@ export default function LiveVideoPlayer({
       <div className="video-wrapper">
         {cameraStatus.is_running ? (
           <img
-            src="/camera/feed"
+            src={feedSrc}
             alt="Live Camera Feed"
             className="video-element"
           />

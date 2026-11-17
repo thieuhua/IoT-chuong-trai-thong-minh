@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { apiSendDeviceCommand } from '../../services/api';
+import { apiSendDeviceCommand, getStoredToken } from '../../services/api';
 import { RoleBadge } from '../common/StatusBadge';
 
 export default function MobileAppView({
@@ -13,6 +13,9 @@ export default function MobileAppView({
   const [servoAngle, setServoAngle] = useState(90);
   const [isFeeding, setIsFeeding] = useState(false);
 
+  const token = getStoredToken();
+  const feedSrc = token ? `/camera/feed?token=${encodeURIComponent(token)}` : '/camera/feed';
+
   const handleFeed = async () => {
     if (!canControl) {
       onNotify('Không có quyền điều khiển.', 'error');
@@ -23,7 +26,13 @@ export default function MobileAppView({
       return;
     }
 
-    const target = devices[0].device_id;
+    const onlineDev = devices.find((d) => d.online) || devices[0];
+    if (!onlineDev?.online) {
+      onNotify('Thiết bị đang ngoại tuyến (Offline), không thể gửi lệnh.', 'error');
+      return;
+    }
+
+    const target = onlineDev.device_id;
     setIsFeeding(true);
     try {
       await apiSendDeviceCommand(target, 'servo_set', { angle: Number(servoAngle) });
@@ -56,7 +65,7 @@ export default function MobileAppView({
             <div className="mobile-tab-pane">
               <div className="mobile-video-box">
                 <img
-                  src="/camera/feed"
+                  src={feedSrc}
                   alt="Camera AI live stream"
                   className="video-element"
                 />
@@ -80,7 +89,8 @@ export default function MobileAppView({
                 <button
                   className="btn btn-success btn-full"
                   onClick={handleFeed}
-                  disabled={isFeeding || !canControl}
+                  disabled={isFeeding || !canControl || !devices || !devices.some((d) => d.online)}
+                  title={devices && !devices.some((d) => d.online) ? 'Thiết bị đang offline' : ''}
                 >
                   {isFeeding ? 'Đang mở...' : 'Cho Ăn'}
                 </button>
@@ -93,7 +103,9 @@ export default function MobileAppView({
                 </div>
                 <div className="quick-stat-box">
                   <span className="stat-label">Cảnh báo</span>
-                  <span className="stat-val text-amber">{alerts.length}</span>
+                  <span className="stat-val text-amber">
+                    {alerts.filter((a) => a.status === 'open' || a.status === 'active').length}
+                  </span>
                 </div>
               </div>
             </div>

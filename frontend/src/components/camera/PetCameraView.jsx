@@ -87,7 +87,13 @@ export default function PetCameraView({ devices, onNotify }) {
       return;
     }
 
-    const targetDevice = devices[0].device_id;
+    const targetDeviceObj = devices.find((d) => d.online) || devices[0];
+    if (!targetDeviceObj?.online) {
+      onNotify('Thiết bị đang ngoại tuyến (Offline), không thể gửi lệnh máng ăn.', 'error');
+      return;
+    }
+
+    const targetDevice = targetDeviceObj.device_id;
     try {
       await apiSendDeviceCommand(targetDevice, 'servo_set', { angle: servoAngle });
       onNotify(`Đã mở máng ăn (${servoAngle}°) tới ${targetDevice}`);

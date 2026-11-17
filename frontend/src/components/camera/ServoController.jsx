@@ -37,7 +37,8 @@ export default function ServoController({
         <button
           className="btn btn-success"
           onClick={handleFeedClick}
-          disabled={isFeeding || !canControl || !devices || devices.length === 0}
+          disabled={isFeeding || !canControl || !devices || !devices.some((d) => d.online)}
+          title={devices && !devices.some((d) => d.online) ? 'Thiết bị đang offline' : ''}
         >
           {isFeeding ? 'Đang mở...' : 'Cho Ăn'}
         </button>

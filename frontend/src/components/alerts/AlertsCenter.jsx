@@ -14,6 +14,7 @@ export default function AlertsCenter({ alerts, onRefreshAlerts, onNotify }) {
 
   const filteredAlerts = alerts.filter((a) => {
     if (filterStatus === 'all') return true;
+    if (filterStatus === 'open') return a.status === 'open' || a.status === 'active';
     return a.status === filterStatus;
   });
 
@@ -57,7 +58,7 @@ export default function AlertsCenter({ alerts, onRefreshAlerts, onNotify }) {
             className="select-control"
           >
             <option value="all">Tất cả</option>
-            <option value="open">Đang kích hoạt</option>
+            <option value="open">Đang mở</option>
             <option value="acknowledged">Đã tiếp nhận</option>
             <option value="closed">Đã đóng</option>
           </select>
@@ -102,7 +103,7 @@ export default function AlertsCenter({ alerts, onRefreshAlerts, onNotify }) {
                   <td>{al.note || '--'}</td>
                   <td>
                     <div className="action-buttons-row">
-                      {al.status === 'open' && (
+                      {(al.status === 'open' || al.status === 'active') && (
                         <button
                           className="btn btn-secondary btn-xs"
                           onClick={() => handleAck(al.id)}

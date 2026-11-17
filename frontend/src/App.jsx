@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from './context/AuthContext';
 import {
   apiGetHealth,
+  apiGetBarns,
   apiGetDevices,
   apiGetRegistrations,
   apiGetAlerts,
@@ -23,6 +24,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('camera');
   const [brokerOnline, setBrokerOnline] = useState(false);
 
+  const [barns, setBarns] = useState([]);
   const [devices, setDevices] = useState([]);
   const [registrations, setRegistrations] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -38,13 +40,16 @@ export default function App() {
       const health = await apiGetHealth();
       setBrokerOnline(Boolean(health.broker_connected));
 
-      const devList = await apiGetDevices();
+      const [barnList, devList, regList, alertList] = await Promise.all([
+        apiGetBarns().catch(() => []),
+        apiGetDevices().catch(() => []),
+        apiGetRegistrations('pending').catch(() => []),
+        apiGetAlerts().catch(() => []),
+      ]);
+
+      setBarns(barnList);
       setDevices(devList);
-
-      const regList = await apiGetRegistrations('pending');
       setRegistrations(regList);
-
-      const alertList = await apiGetAlerts();
       setAlerts(alertList);
     } catch {
       setBrokerOnline(false);
@@ -106,9 +111,9 @@ export default function App() {
               onClick={() => setActiveTab('alerts')}
             >
               Cảnh Báo
-              {alerts.filter((a) => a.status === 'open').length > 0 && (
+              {alerts.filter((a) => a.status === 'open' || a.status === 'active').length > 0 && (
                 <span className="badge-count">
-                  {alerts.filter((a) => a.status === 'open').length}
+                  {alerts.filter((a) => a.status === 'open' || a.status === 'active').length}
                 </span>
               )}
             </button>
@@ -127,10 +132,11 @@ export default function App() {
               <PetCameraView devices={devices} onNotify={showNotification} />
             )}
             {activeTab === 'sensors' && (
-              <BarnDashboard devices={devices} onNotify={showNotification} />
+              <BarnDashboard barns={barns} devices={devices} onNotify={showNotification} />
             )}
             {activeTab === 'devices' && (
               <DeviceManager
+                barns={barns}
                 devices={devices}
                 registrations={registrations}
                 onRefreshDevices={syncSystemData}
