@@ -16,7 +16,7 @@ python -m pytest tests            # khoảng 2 phút
 python -m pytest tests -m "not hieu_nang"   # bỏ phần đo hiệu năng, chạy nhanh hơn
 ```
 
-Kết quả mong đợi hiện tại: **144 passed, 13 xfailed** (6 test broker thật bị *skipped* nếu không có broker).
+Kết quả mong đợi hiện tại: **147 passed, 10 xfailed** (6 test broker thật bị *skipped* nếu không có broker).
 
 Số đo hiệu năng của lần chạy gần nhất được ghi vào `tests/ket-qua/so-do-moi-nhat.md`
 (bảng dán thẳng vào chương kiểm thử). Bản chạy mẫu: [ket-qua/so-do-2026-11-17.md](ket-qua/so-do-2026-11-17.md).
@@ -68,7 +68,6 @@ Sửa xong mục nào thì **xóa dòng `@pytest.mark.xfail`** của test đó.
 | TC-75 | `POST /barns/{id}/commands` mà frontend đang gọi |
 | TC-76 | Tắt `sequence.autostart` của servo trong `firmware/config.example.json` |
 | TC-77 | ESP32 dùng MQTT TLS (8883) như báo cáo |
-| TC-65 | `/camera/*` phải đăng nhập |
 | TC-66 | `GET /devices/...` phải kiểm quyền theo chuồng (hiện Operator chuồng 2 xem được chuồng 1) |
 | TC-87 | Hơn 15 lệnh cùng lúc làm nghẽn pool kết nối DB (mỗi request giữ 1 kết nối trong lúc chờ ESP32) |
 

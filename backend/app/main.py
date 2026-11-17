@@ -208,22 +208,33 @@ async def run_firmware_job(app: FastAPI, job: dict, files: dict[str, bytes], wai
 security = HTTPBearer(auto_error=False)
 
 
-def get_current_user(
-    token: Optional[str] = Query(None),
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: Session = Depends(get_db)
-):
-    raw_token = credentials.credentials if credentials else token
+def _authenticate(db: Session, raw_token: Optional[str]):
     if not raw_token:
         raise HTTPException(
             status_code=401,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return auth.get_current_user(
-        db,
-        raw_token
-    )
+    return auth.get_current_user(db, raw_token)
+
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """Token chỉ nhận qua header Authorization: Bearer."""
+    return _authenticate(db, credentials.credentials if credentials else None)
+
+
+def get_current_user_allow_query(
+    token: Optional[str] = Query(None),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """Header hoặc ?token=. Chỉ dùng cho route trình duyệt không gửi được header:
+    EventSource (/events) và <img> (/camera/feed). Token trong URL dễ lọt vào log,
+    nên không mở cho các route khác."""
+    return _authenticate(db, credentials.credentials if credentials else token)
 
 
 def require_roles(*roles):
@@ -567,7 +578,7 @@ async def reject(
 @app.get("/events")
 async def events(
     request: Request,
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user_allow_query)
 ):
     gateway = request.app.state.gateway
 
@@ -1188,7 +1199,7 @@ class CameraConfigBody(BaseModel):
 
 @app.get("/camera/feed")
 async def camera_feed(
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user_allow_query),
 ):
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
@@ -1225,7 +1236,9 @@ async def camera_start(
 ):
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
-    camera_streamer.start()
+    # start/stop/update_config mở camera hoặc join luồng (tới 2 s): chạy ngoài event loop
+    # để không chặn MQTT gateway và các request khác.
+    await asyncio.to_thread(camera_streamer.start)
     return {"ok": True, "running": True}
 
 
@@ -1235,7 +1248,7 @@ async def camera_stop(
 ):
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
-    camera_streamer.stop()
+    await asyncio.to_thread(camera_streamer.stop)
     return {"ok": True, "running": False}
 
 
@@ -1244,10 +1257,12 @@ async def camera_config(
     body: CameraConfigBody,
     current_user: models.User = Depends(require_roles("Admin", "Operator")),
 ):
+    # Kiểm tra đầu vào trước: source xấu luôn bị từ chối (400), kể cả khi máy không có camera.
+    validated_source = validate_camera_source(body.source) if body.source is not None else None
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
-    validated_source = validate_camera_source(body.source) if body.source is not None else None
-    camera_streamer.update_config(
+    await asyncio.to_thread(
+        camera_streamer.update_config,
         allow_person=body.allow_person,
         motionless_sec=body.motionless_sec,
         moving_threshold=body.moving_threshold,

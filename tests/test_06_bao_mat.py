@@ -189,9 +189,7 @@ async def test_tc64_thiet_bi_da_thu_hoi_khong_quay_lai_tu_tin_retained(system):
         system.broker.connect(device.device_id, device.device_id, device.password)
 
 
-# ------------------------------------------- lỗ hổng còn lại (chưa sửa trong code)
-@pytest.mark.xfail(reason="P2: /camera/* chưa yêu cầu đăng nhập (backend/app/main.py). "
-                          "Thêm Depends(get_current_user) rồi xóa dòng xfail này.", strict=False)
+# ------------------------------------------- camera (đã sửa trong PR #15)
 @pytest.mark.parametrize("method,path", [("GET", "/camera/status"), ("POST", "/camera/stop"),
                                          ("POST", "/camera/config")])
 async def test_tc65_camera_phai_dang_nhap(system, method, path):
@@ -199,6 +197,7 @@ async def test_tc65_camera_phai_dang_nhap(system, method, path):
     assert r.status_code in (401, 403)
 
 
+# ------------------------------------------- lỗ hổng còn lại (chưa sửa trong code)
 @pytest.mark.xfail(reason="Đọc thiết bị/telemetry (GET /devices/...) chỉ cần đăng nhập, chưa kiểm "
                           "chuồng: Operator chuồng 2 xem được dữ liệu chuồng 1.", strict=False)
 async def test_tc66_khong_xem_duoc_du_lieu_chuong_khong_duoc_gan(system):

@@ -124,33 +124,37 @@ async def test_camera_routes_authorization():
     admin_user = models.User(id="u1", username="admin", role="Admin", status="active", password_hash="dummy")
     viewer_user = models.User(id="u2", username="viewer", role="Viewer", status="active", password_hash="dummy")
 
-    # Viewer can access status
-    app.dependency_overrides[get_current_user] = lambda: viewer_user
+    previous_overrides = app.dependency_overrides.copy()
+    try:
+        # Viewer can access status
+        app.dependency_overrides[get_current_user] = lambda: viewer_user
 
-    status, body = await asgi_request("GET", "/camera/status")
-    assert status == 200
+        status, body = await asgi_request("GET", "/camera/status")
+        assert status == 200
 
-    # Viewer cannot start/stop/config
-    status, _ = await asgi_request("POST", "/camera/start")
-    assert status == 403
+        # Viewer cannot start/stop/config
+        status, _ = await asgi_request("POST", "/camera/start")
+        assert status == 403
 
-    status, _ = await asgi_request("POST", "/camera/stop")
-    assert status == 403
+        status, _ = await asgi_request("POST", "/camera/stop")
+        assert status == 403
 
-    status, _ = await asgi_request("POST", "/camera/config", body={"allow_person": True})
-    assert status == 403
+        status, _ = await asgi_request("POST", "/camera/config", body={"allow_person": True})
+        assert status == 403
 
-    # Admin can start/stop/config
-    app.dependency_overrides[get_current_user] = lambda: admin_user
+        # Admin can start/stop/config
+        app.dependency_overrides[get_current_user] = lambda: admin_user
 
-    # Camera config with malicious source should be rejected with 400
-    status, _ = await asgi_request("POST", "/camera/config", body={"source": "/etc/passwd"})
-    assert status == 400
+        # Malicious source is rejected with 400 even when no camera module is installed
+        status, _ = await asgi_request("POST", "/camera/config", body={"source": "/etc/passwd"})
+        assert status == 400
 
-    status, _ = await asgi_request("POST", "/camera/config", body={"source": "http://127.0.0.1/private"})
-    assert status == 400
-
-    app.dependency_overrides.clear()
+        status, _ = await asgi_request("POST", "/camera/config", body={"source": "http://127.0.0.1/private"})
+        assert status == 400
+    finally:
+        # Restore even when an assert fails, so overrides cannot leak into later tests.
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
 
 
 @pytest.mark.asyncio
@@ -166,9 +170,18 @@ async def test_camera_query_token_auth(monkeypatch):
 
     monkeypatch.setattr(auth, "get_current_user", mock_get_current_user)
 
-    status, _ = await asgi_request("GET", "/camera/status", query=b"token=valid-token")
-    assert status == 200
+    # /camera/feed (embedded in <img>) accepts ?token=. With a valid token the request
+    # gets past authentication: 503 without the camera module, 409 while the camera is off.
+    status, _ = await asgi_request("GET", "/camera/feed", query=b"token=valid-token")
+    assert status not in (401, 403)
 
-    status, _ = await asgi_request("GET", "/camera/status", query=b"token=invalid-token")
+    status, _ = await asgi_request("GET", "/camera/feed", query=b"token=invalid-token")
     assert status == 401
+
+    # Other routes take the token from the Authorization header only, never from the URL.
+    status, _ = await asgi_request("GET", "/camera/status", query=b"token=valid-token")
+    assert status == 401
+
+    status, _ = await asgi_request("GET", "/camera/status", headers={"Authorization": "Bearer valid-token"})
+    assert status == 200
 
