@@ -1,6 +1,8 @@
 
 
 
+*.pt
+*.onnx
 .venv/
 __pycache__/
 *.pyc
@@ -13,3 +15,5 @@ __pycache__/
 /deployment/tunnel.local.ps1
 
 node_modules/
+
+.DS_Store

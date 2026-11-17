@@ -17,7 +17,13 @@ from typing import Any, Literal, Optional
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+try:
+    from vision import CameraStreamer
+except ImportError:
+    CameraStreamer = None
 
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -96,9 +102,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.state.firmware_jobs = {}
 app.state.firmware_tasks = set()
 app.state.ota_listeners = set()
+
+camera_streamer = CameraStreamer(source=0, allow_person=False, motionless_sec=40.0) if CameraStreamer else None
 
 
 async def error_response(request: Request, exc: Exception):
@@ -1025,6 +1040,75 @@ def cancel_scheduled_event(
         "message": "Scheduled event cancelled",
         "event_id": event.id
     }
+
+
+# ---------------------------------------------------------
+# Camera AI & Computer Vision Routes
+# ---------------------------------------------------------
+class CameraConfigBody(BaseModel):
+    source: str | int | None = None
+    allow_person: bool | None = None
+    motionless_sec: float | None = None
+    moving_threshold: float | None = None
+
+
+@app.get("/camera/feed")
+async def camera_feed():
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    if not camera_streamer.running:
+        camera_streamer.start()
+    return StreamingResponse(
+        camera_streamer.generate_mjpeg(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/camera/status")
+async def camera_status():
+    if not camera_streamer:
+        return {"is_available": False, "state": "unavailable"}
+    return {
+        "is_available": True,
+        **camera_streamer.get_latest_snapshot(),
+        "config": {
+            "source": camera_streamer.source,
+            "allow_person": camera_streamer.allow_person,
+            "motionless_sec": camera_streamer.motionless_sec,
+            "moving_threshold": camera_streamer.moving_threshold,
+        },
+    }
+
+
+@app.post("/camera/start")
+async def camera_start():
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    camera_streamer.start()
+    return {"ok": True, "running": True}
+
+
+@app.post("/camera/stop")
+async def camera_stop():
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    camera_streamer.stop()
+    return {"ok": True, "running": False}
+
+
+@app.post("/camera/config")
+async def camera_config(body: CameraConfigBody):
+    if not camera_streamer:
+        raise HTTPException(503, "Camera module not available")
+    camera_streamer.update_config(
+        allow_person=body.allow_person,
+        motionless_sec=body.motionless_sec,
+        moving_threshold=body.moving_threshold,
+        source=body.source,
+    )
+    return {"ok": True, "status": camera_streamer.get_latest_snapshot()}
+
 
 
 

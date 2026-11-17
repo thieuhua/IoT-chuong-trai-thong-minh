@@ -2,8 +2,11 @@ import pytest
 
 # vision/__init__.py nạp cả detector (ultralytics) và streamer (cv2):
 # bỏ qua khi máy chưa cài bộ thư viện camera.
-for _module in ("numpy", "cv2", "ultralytics"):
-    pytest.importorskip(_module, reason=f"cần {_module} (thư viện camera)")
+try:
+    for _module in ("numpy", "cv2"):
+        pytest.importorskip(_module, reason=f"cần {_module} (thư viện camera)")
+except Exception as e:
+    pytest.skip(str(e), allow_module_level=True)
 
 from vision.analyzer import PetBehaviorAnalyzer, BehaviorState  # noqa: E402
 
@@ -90,6 +93,24 @@ def test_absent_timeout():
     t += 1.5
     s_absent = analyzer.update(box=None, now=t)
     assert s_absent.state == BehaviorState.ABSENT
+
+
+def test_camera_streamer_snapshot_and_config():
+    from vision.streamer import CameraStreamer
+    streamer = CameraStreamer(source=0, allow_person=False, motionless_sec=40.0, moving_threshold=25.0)
+    assert not streamer.running
+    snap = streamer.get_latest_snapshot()
+    assert snap["is_running"] is False
+    assert snap["state"] == "absent"
+
+    streamer.update_config(motionless_sec=15.0, moving_threshold=30.0)
+    assert streamer.motionless_sec == 15.0
+    assert streamer.moving_threshold == 30.0
+
+    # Test MJPEG generator yields multipart frames
+    gen = streamer.generate_mjpeg()
+    first_frame = next(gen)
+    assert b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" in first_frame
 
 
 if __name__ == "__main__":
