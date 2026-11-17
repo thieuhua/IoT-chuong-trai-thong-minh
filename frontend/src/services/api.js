@@ -112,14 +112,36 @@ export async function request(url, options = {}) {
   }
 
   if (!response.ok) {
-    let errorDetail = 'Lỗi không xác định';
+    let errorDetail = '';
     try {
       const errData = await response.json();
-      errorDetail = errData.detail || errData.message || JSON.stringify(errData);
+      errorDetail = errData.detail || errData.message || (typeof errData === 'string' ? errData : JSON.stringify(errData));
     } catch {
-      errorDetail = response.statusText || `Lỗi HTTP ${response.status}`;
+      errorDetail = response.statusText || '';
     }
-    throw new Error(errorDetail);
+
+    let statusPrefix = '';
+    switch (response.status) {
+      case 403:
+        statusPrefix = 'Lỗi 403 (Từ chối truy cập): Bạn không có quyền thực hiện thao tác này';
+        break;
+      case 409:
+        statusPrefix = 'Lỗi 409 (Xung đột): Thiết bị đang offline hoặc trạng thái không hợp lệ';
+        break;
+      case 502:
+        statusPrefix = 'Lỗi 502 (Bad Gateway): Thiết bị hoặc broker báo lỗi thực thi lệnh';
+        break;
+      case 504:
+        statusPrefix = 'Lỗi 504 (Hết thời gian): Quá thời gian chờ phản hồi từ thiết bị';
+        break;
+      default:
+        statusPrefix = `Lỗi HTTP ${response.status}`;
+    }
+
+    const message = errorDetail ? `${statusPrefix} - ${errorDetail}` : statusPrefix;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
 
   // Nếu phản hồi là JSON
@@ -252,6 +274,19 @@ export async function apiSetDeviceInterval(deviceId, seconds) {
   });
 }
 
+export async function apiUpdateDevice(deviceId, data) {
+  return request(`/devices/${deviceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function apiRevokeDevice(deviceId) {
+  return request(`/devices/${deviceId}`, {
+    method: 'DELETE',
+  });
+}
+
 // ==========================================
 // 5. REGISTRATIONS (PROVISIONING)
 // ==========================================
@@ -260,10 +295,14 @@ export async function apiGetRegistrations(status = 'pending') {
   return Array.isArray(res) ? res : [];
 }
 
-export async function apiApproveRegistration(hwId, deviceId = null, name = '') {
+export async function apiApproveRegistration(hwId, deviceId = null, name = '', barnId = null) {
   return request(`/registrations/${hwId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ device_id: deviceId, name }),
+    body: JSON.stringify({
+      device_id: deviceId || undefined,
+      name: name || undefined,
+      barn_id: barnId || undefined,
+    }),
   });
 }
 
@@ -344,4 +383,33 @@ export async function apiConfigCamera(config) {
     method: 'POST',
     body: JSON.stringify(config),
   });
+}
+
+// ==========================================
+// 9. SSE REAL-TIME EVENTS
+// ==========================================
+export function subscribeToEvents(onEvent, onError) {
+  const token = getStoredToken();
+  const url = token ? `/events?token=${encodeURIComponent(token)}` : '/events';
+  const es = new EventSource(url);
+
+  const eventTypes = ['telemetry', 'status', 'registration', 'device', 'ota'];
+  eventTypes.forEach((type) => {
+    es.addEventListener(type, (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (onEvent) onEvent(type, data);
+      } catch (err) {
+        console.error('Lỗi phân tích SSE data:', err);
+      }
+    });
+  });
+
+  es.onerror = (err) => {
+    if (onError) onError(err);
+  };
+
+  return () => {
+    es.close();
+  };
 }

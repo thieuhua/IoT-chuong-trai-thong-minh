@@ -625,7 +625,7 @@ body {
   border-radius: 6px;
   font-size: 0.75rem;
 }
-.pill-active { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+.pill-active, .pill-open { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
 .pill-acknowledged { background: rgba(56, 189, 248, 0.2); color: #38bdf8; }
 .pill-closed { background: rgba(16, 185, 129, 0.2); color: #10b981; }
 .pill-locked { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }

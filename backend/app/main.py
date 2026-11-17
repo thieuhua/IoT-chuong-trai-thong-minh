@@ -4,8 +4,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import ipaddress
 import json
 import os
+import socket
+import urllib.parse
 from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -102,9 +105,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env:
+    allow_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+else:
+    allow_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -136,7 +153,8 @@ for error in (DeviceNotFound, RegistrationNotFound, DeviceOffline, InvalidState,
 
 
 class RenameBody(BaseModel):
-    name: str
+    name: str | None = None
+    barn_id: str | None = None
 
 
 class CommandBody(BaseModel):
@@ -152,6 +170,7 @@ class IntervalBody(BaseModel):
 class ApproveBody(BaseModel):
     device_id: str | None = None
     name: str = ""
+    barn_id: str | None = None
 
 
 class RejectBody(BaseModel):
@@ -186,16 +205,24 @@ async def run_firmware_job(app: FastAPI, job: dict, files: dict[str, bytes], wai
     finally:
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
 
-security = HTTPBearer(auto_error=True)
+security = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    token: Optional[str] = Query(None),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db)
 ):
+    raw_token = credentials.credentials if credentials else token
+    if not raw_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return auth.get_current_user(
         db,
-        credentials.credentials
+        raw_token
     )
 
 
@@ -356,11 +383,27 @@ async def rename(
     current_user: models.User = Depends(get_current_user)
 ):
     device = check_device_write_access(device_id, db, current_user)
-    result = public(await request.app.state.gateway.rename(device_id, body.name))
-    if device.name != body.name:
-        audit.record_change(db, current_user.id, "device.rename", f"devices:{device_id}")
-        db.commit()
-    return result
+    device_res = None
+    if body.name is not None:
+        device_res = await request.app.state.gateway.rename(device_id, body.name)
+        if device.name != body.name:
+            audit.record_change(db, current_user.id, "device.rename", f"devices:{device_id}")
+            db.commit()
+
+    if body.barn_id is not None:
+        if body.barn_id:
+            barn_row = db.query(models.Barn).filter(models.Barn.id == body.barn_id).first()
+            if not barn_row:
+                raise HTTPException(404, "Barn not found")
+        dev_row = db.query(models.Device).filter(models.Device.device_id == device_id).first()
+        if dev_row:
+            dev_row.barn_id = body.barn_id or None
+            audit.record_change(db, current_user.id, "device.assign_barn", f"devices:{device_id}")
+            db.commit()
+
+    if device_res is None:
+        device_res = await request.app.state.gateway.get_device(device_id)
+    return public(device_res)
 
 
 @app.delete("/devices/{device_id}")
@@ -487,14 +530,22 @@ async def approve(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_roles("Admin"))
 ):
-    result = public(await request.app.state.gateway.approve(
-        hw_id, device_id=body.device_id, name=body.name
-    ))
+    result = await request.app.state.gateway.approve(hw_id, device_id=body.device_id, name=body.name)
+    if body.barn_id:
+        barn_row = db.query(models.Barn).filter(models.Barn.id == body.barn_id).first()
+        if not barn_row:
+            raise HTTPException(404, "Barn not found")
+        dev_id = getattr(result, "device_id", None) or (result.get("device_id") if isinstance(result, dict) else None)
+        if dev_id:
+            dev_row = db.query(models.Device).filter(models.Device.device_id == dev_id).first()
+            if dev_row:
+                dev_row.barn_id = body.barn_id
+                db.commit()
     audit.record_change(
         db, current_user.id, "registration.approve", f"registrations:{hw_id}"
     )
     db.commit()
-    return result
+    return public(result)
 
 
 @app.post("/registrations/{hw_id}/reject")
@@ -1081,6 +1132,53 @@ def cancel_scheduled_event(
 # ---------------------------------------------------------
 # Camera AI & Computer Vision Routes
 # ---------------------------------------------------------
+ALLOWED_CAMERA_SOURCES = [
+    s.strip()
+    for s in os.getenv("ALLOWED_CAMERA_SOURCES", "0,1").split(",")
+    if s.strip()
+]
+
+
+def validate_camera_source(source: str | int | None) -> str | int | None:
+    if source is None:
+        return None
+    source_str = str(source).strip()
+    if source_str not in ALLOWED_CAMERA_SOURCES:
+        raise HTTPException(
+            400,
+            f"Nguồn camera '{source}' không nằm trong danh sách cho phép: {ALLOWED_CAMERA_SOURCES}",
+        )
+    if source_str.isdigit():
+        return int(source_str)
+
+    parsed = urllib.parse.urlparse(source_str)
+    if parsed.scheme.lower() not in ("rtsp", "rtsps", "http", "https"):
+        raise HTTPException(400, "Invalid camera source scheme: only rtsp, rtsps, http, https are allowed")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(400, "Invalid camera source URL: missing hostname")
+
+    if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        raise HTTPException(400, "Access to local/internal network camera sources is prohibited")
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise HTTPException(400, "Access to private or local network camera sources is prohibited")
+    except ValueError:
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+            for entry in addr_info:
+                ip_str = entry[4][0]
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                    raise HTTPException(400, "Access to private or local network camera sources is prohibited")
+        except socket.gaierror:
+            raise HTTPException(400, f"Cannot resolve camera hostname: {hostname}")
+    return source_str
+
+
 class CameraConfigBody(BaseModel):
     source: str | int | None = None
     allow_person: bool | None = None
@@ -1089,11 +1187,13 @@ class CameraConfigBody(BaseModel):
 
 
 @app.get("/camera/feed")
-async def camera_feed():
+async def camera_feed(
+    current_user: models.User = Depends(get_current_user),
+):
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
     if not camera_streamer.running:
-        camera_streamer.start()
+        raise HTTPException(409, "Camera đang tắt. Vui lòng bấm Bật Camera để bắt đầu.")
     return StreamingResponse(
         camera_streamer.generate_mjpeg(),
         media_type="multipart/x-mixed-replace; boundary=frame",
@@ -1102,7 +1202,9 @@ async def camera_feed():
 
 
 @app.get("/camera/status")
-async def camera_status():
+async def camera_status(
+    current_user: models.User = Depends(get_current_user),
+):
     if not camera_streamer:
         return {"is_available": False, "state": "unavailable"}
     return {
@@ -1118,7 +1220,9 @@ async def camera_status():
 
 
 @app.post("/camera/start")
-async def camera_start():
+async def camera_start(
+    current_user: models.User = Depends(require_roles("Admin", "Operator")),
+):
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
     camera_streamer.start()
@@ -1126,7 +1230,9 @@ async def camera_start():
 
 
 @app.post("/camera/stop")
-async def camera_stop():
+async def camera_stop(
+    current_user: models.User = Depends(require_roles("Admin", "Operator")),
+):
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
     camera_streamer.stop()
@@ -1134,14 +1240,18 @@ async def camera_stop():
 
 
 @app.post("/camera/config")
-async def camera_config(body: CameraConfigBody):
+async def camera_config(
+    body: CameraConfigBody,
+    current_user: models.User = Depends(require_roles("Admin", "Operator")),
+):
     if not camera_streamer:
         raise HTTPException(503, "Camera module not available")
+    validated_source = validate_camera_source(body.source) if body.source is not None else None
     camera_streamer.update_config(
         allow_person=body.allow_person,
         motionless_sec=body.motionless_sec,
         moving_threshold=body.moving_threshold,
-        source=body.source,
+        source=validated_source,
     )
     return {"ok": True, "status": camera_streamer.get_latest_snapshot()}
 

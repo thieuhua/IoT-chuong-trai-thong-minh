@@ -5,13 +5,16 @@ import {
   apiRebootDevice,
   apiApproveRegistration,
   apiRejectRegistration,
+  apiRevokeDevice,
+  apiUpdateDevice,
 } from '../../services/api';
 import DeviceList from './DeviceList';
 import PendingRegistrations from './PendingRegistrations';
 
 export default function DeviceManager({
-  devices,
-  registrations,
+  barns = [],
+  devices = [],
+  registrations = [],
   onRefreshDevices,
   onRefreshRegistrations,
   onNotify,
@@ -24,7 +27,7 @@ export default function DeviceManager({
       await apiPingDevice(deviceId);
       onNotify(`Đã gửi Ping tới ${deviceId}`);
     } catch (err) {
-      onNotify('Lỗi: ' + err.message, 'error');
+      onNotify(err.message, 'error');
     }
   };
 
@@ -37,22 +40,54 @@ export default function DeviceManager({
       await apiRebootDevice(deviceId);
       onNotify(`Đã gửi lệnh khởi động lại ${deviceId}`);
     } catch (err) {
-      onNotify('Lỗi: ' + err.message, 'error');
+      onNotify(err.message, 'error');
     }
   };
 
-  const handleApprove = async (hwId) => {
+  const handleAssignBarn = async (deviceId, barnId) => {
+    if (!canManage) {
+      onNotify('Chỉ Quản trị viên mới có quyền gán chuồng cho thiết bị.', 'error');
+      return;
+    }
+    try {
+      await apiUpdateDevice(deviceId, { barn_id: barnId || null });
+      onNotify(`Đã gán thiết bị ${deviceId} vào chuồng`);
+      onRefreshDevices();
+    } catch (err) {
+      onNotify(err.message, 'error');
+    }
+  };
+
+  const handleRevoke = async (deviceId) => {
+    if (!canManage) {
+      onNotify('Chỉ Quản trị viên mới có quyền thu hồi thiết bị.', 'error');
+      return;
+    }
+    if (!window.confirm(`Bạn có chắc chắn muốn thu hồi thiết bị ${deviceId}? Sau khi thu hồi, thiết bị sẽ bị ngắt kết nối.`)) {
+      return;
+    }
+    try {
+      await apiRevokeDevice(deviceId);
+      onNotify(`Đã thu hồi thiết bị ${deviceId}`);
+      onRefreshDevices();
+      onRefreshRegistrations();
+    } catch (err) {
+      onNotify(err.message, 'error');
+    }
+  };
+
+  const handleApprove = async (hwId, deviceId = null, name = '', barnId = null) => {
     if (!canManage) {
       onNotify('Chỉ Quản trị viên mới có quyền duyệt thiết bị.', 'error');
       return;
     }
     try {
-      await apiApproveRegistration(hwId);
-      onNotify(`Đã phê duyệt ${hwId}`);
+      await apiApproveRegistration(hwId, deviceId, name, barnId);
+      onNotify(`Đã phê duyệt thiết bị ${hwId}`);
       onRefreshRegistrations();
       onRefreshDevices();
     } catch (err) {
-      onNotify('Lỗi: ' + err.message, 'error');
+      onNotify(err.message, 'error');
     }
   };
 
@@ -66,7 +101,7 @@ export default function DeviceManager({
       onNotify(`Đã từ chối ${hwId}`);
       onRefreshRegistrations();
     } catch (err) {
-      onNotify('Lỗi: ' + err.message, 'error');
+      onNotify(err.message, 'error');
     }
   };
 
@@ -89,13 +124,17 @@ export default function DeviceManager({
 
       {activeSubTab === 'devices' ? (
         <DeviceList
+          barns={barns}
           devices={devices}
           onRefresh={onRefreshDevices}
           onPing={handlePing}
           onReboot={handleReboot}
+          onAssignBarn={handleAssignBarn}
+          onRevoke={handleRevoke}
         />
       ) : (
         <PendingRegistrations
+          barns={barns}
           registrations={registrations}
           onRefresh={onRefreshRegistrations}
           onApprove={handleApprove}

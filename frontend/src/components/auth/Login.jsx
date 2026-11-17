@@ -7,12 +7,12 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = async (e, customUser = null, customPass = null) => {
+  const handleSubmit = async (e) => {
     if (e?.preventDefault) e.preventDefault();
     setError('');
 
-    const u = customUser || username;
-    const p = customPass || password;
+    const u = username.trim();
+    const p = password;
 
     if (!u || !p) {
       setError('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
@@ -68,32 +68,6 @@ export default function Login() {
             {loading ? 'Đang đăng nhập...' : 'Đăng Nhập'}
           </button>
         </form>
-
-        <div className="demo-accounts-box">
-          <div className="demo-btn-row">
-            <button
-              type="button"
-              className="demo-pill-btn role-admin"
-              onClick={() => handleSubmit(null, 'admin', 'Admin@123456')}
-            >
-              Admin
-            </button>
-            <button
-              type="button"
-              className="demo-pill-btn role-operator"
-              onClick={() => handleSubmit(null, 'operator', 'Operator@123')}
-            >
-              Operator
-            </button>
-            <button
-              type="button"
-              className="demo-pill-btn role-viewer"
-              onClick={() => handleSubmit(null, 'viewer', 'Viewer@123456')}
-            >
-              Viewer
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );
