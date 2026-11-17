@@ -1,8 +1,17 @@
 {
-  "wifi": {
-    "ssid": "YOUR_WIFI_SSID",
-    "password": "YOUR_WIFI_PASSWORD"
-  },
+  "wifi": [
+    {
+      "ssid": "YOUR_WIFI_SSID",
+      "password": "YOUR_WIFI_PASSWORD",
+      "mqtt_host": "192.168.137.1"
+    },
+    {
+      "ssid": "YOUR_SECOND_WIFI_SSID",
+      "password": "YOUR_SECOND_WIFI_PASSWORD",
+      "mqtt_host": "192.168.1.20",
+      "mqtt_port": 1883
+    }
+  ],
   "mqtt": {
     "host": "192.168.137.1",
     "port": 1883,

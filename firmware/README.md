@@ -23,6 +23,11 @@ khởi động board tự quay về bản cũ (`ota_status.rolled_back_from`). `
 
 1. Chép `config.example.json` thành `src/config.json`; nhập Wi-Fi, MQTT host và
    mật khẩu bootstrap được quản trị viên cung cấp. Không commit file cấu hình thật.
+   `wifi` là danh sách theo thứ tự ưu tiên; object cũ vẫn dùng được. Ví dụ:
+   `"wifi": [{"ssid":"Hotspot laptop","password":"...","mqtt_host":"192.168.137.1"}, {"ssid":"Wifi nha","password":"..."}]`.
+   `mqtt_host`/`mqtt_port` của từng mạng ghi đè `mqtt.host`/`mqtt.port`; bỏ qua để dùng mặc định.
+   Board thử các mạng đang thấy theo ưu tiên; quét lỗi/không thấy mạng đã cấu hình thì thử tất cả.
+   Kết nối đang hoạt động được giữ nguyên; serial và `get_info.ssid` cho biết mạng đang dùng.
    DHT11 dùng GPIO25 (G34–39 chỉ đọc vào, không dùng được); servo SG90 ở G14 cần nguồn 5 V ≥ 2 A; relay ở G26.
 2. Nạp lần đầu qua USB như trên.
 3. Lần khởi động đầu, xem `hw_id` trên serial và chờ quản trị viên duyệt đăng ký.
@@ -48,6 +53,26 @@ trả `sensor_error`, tên không tồn tại trả `sensor_not_found`.
 Giữ `watchdog_s: 0` khi phát triển: WDT đã bật không thể dừng, kể cả khi Ctrl+C.
 Khi bật, đặt timeout đủ lớn cho thao tác mạng đồng bộ (DNS/connect/QoS1 có thể chặn).
 Các vòng Wi-Fi, provisioning, session và chờ backoff đều feed WDT.
+
+## Script tiện ích
+
+Chạy từ gốc repo. Script PowerShell dùng `.venv/Scripts/mpremote.exe` hoặc
+`.venv/Scripts/esptool.exe`; báo lỗi nếu thiếu. Python chỉ dùng thư viện chuẩn.
+
+| Script | Dùng khi nào | Ví dụ một dòng |
+| --- | --- | --- |
+| `firmware/tools/board.ps1` | `ports`, `monitor`, `info`, `scan`, `backup`, `reset` qua USB | `powershell -File firmware/tools/board.ps1 info -Port COM3` |
+| `firmware/tools/flash_micropython.ps1` | Xóa board và nạp binary mới nhất trong `firmware/bin/`, hoặc chọn `-Bin`; gõ `yes` để xác nhận (`-Force` bỏ câu hỏi) | `powershell -File firmware/tools/flash_micropython.ps1 -Port COM3 -WhatIf` |
+| `firmware/tools/make_config.py` | `init` từ example và mật khẩu bootstrap trong `deployment/.env`; `wifi-add`, `wifi-remove`, `wifi-list`, `check` | `python firmware/tools/make_config.py wifi-add "Wifi nha" --mqtt-host 192.168.1.20 --first` |
+| `backend/tools/device_cmd.py` | Đăng nhập REST, liệt kê thiết bị hoặc gửi lệnh; mật khẩu nhập ẩn | `python backend/tools/device_cmd.py --user admin esp32-ID ping` |
+
+`make_config.py init` giữ file đã có, chỉ ghi đè với `--force`. `wifi-add` cập nhật nếu
+trùng SSID, nhập mật khẩu bằng prompt hoặc `--password-stdin`; `wifi-list` không in mật khẩu.
+`check` cảnh báo trường còn `YOUR_...`/`FROM_...`. Dùng `--help` để xem thêm ví dụ lệnh REST.
+`board.ps1 backup` lưu các JSON có trên board vào `firmware/bin/board_backups/<yyyyMMdd_HHmmss>/`
+(đã được Git bỏ qua qua quy tắc `bin/`); bản backup có mật khẩu, cần giữ riêng.
+`mpremote exec` tự ngắt app bằng Ctrl+C; WDT vẫn chạy nếu `watchdog_s > 0`.
+Trong monitor, Ctrl+] để thoát. Sau flash, chạy `deploy.ps1 -Config` rồi duyệt đăng ký lại.
 
 Host tests (không truy cập board): `.venv/Scripts/python.exe -m pytest firmware/tests -q`.
 Nếu venv repo chưa có pytest, tạo `firmware/.venv` từ Python repo rồi chỉ cài pytest

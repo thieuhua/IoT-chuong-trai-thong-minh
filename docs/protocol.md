@@ -142,7 +142,7 @@ Envelope `id` của lệnh dùng làm mã ghép phản hồi. Thiết bị bỏ 
 | Lệnh | `args` | `result` |
 | --- | --- | --- |
 | `ping` | — | `{"uptime_s": 123}` |
-| `get_info` | — | nội dung `meta` + `{"uptime_s", "mem_free", "rssi", "ip"}` |
+| `get_info` | — | nội dung `meta` + `{"uptime_s", "mem_free", "rssi", "ip", "ssid"}` |
 | `read` | `{"sensor": "room"}` hoặc `{}` (tất cả) | giống `data` của telemetry |
 | `set_interval` | `{"seconds": 10}` (1–3600) | `{"interval_s": 10}`; thiết bị lưu vào flash |
 | `reboot` | — | `{}`; thiết bị trả lời, publish `offline` (`reboot`), rồi reset sau ~1 s |

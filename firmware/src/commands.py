@@ -36,7 +36,8 @@ def get_info(ctx, args):
     result = ctx.meta()
     wlan = wifi.interface()
     result.update({"uptime_s": ctx.uptime_s(), "mem_free": gc.mem_free(),
-                   "rssi": wlan.status("rssi"), "ip": wlan.ifconfig()[0]})
+                   "rssi": wlan.status("rssi"), "ip": wlan.ifconfig()[0],
+                   "ssid": (ctx.network or {}).get("ssid")})
     return result
 
 

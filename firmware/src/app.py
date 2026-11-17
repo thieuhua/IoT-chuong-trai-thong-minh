@@ -36,6 +36,7 @@ class App:
             self._timer.init(mode=machine.Timer.PERIODIC, period=ACTUATOR_TICK_MS,
                              callback=self._tick_actuators)
         self.link = None
+        self.network = None
         self.reboot_requested = False
         self.meta_dirty = False
         self.auth_failures = 0
@@ -94,7 +95,9 @@ class App:
 
     def new_link(self, client_id, user, password, handler):
         cfg = self.config["mqtt"]
-        return MQTTLink(client_id, cfg["host"], port=cfg.get("port", 1883),
+        profile = self.network or {}
+        return MQTTLink(client_id, profile.get("mqtt_host", cfg["host"]),
+                        port=profile.get("mqtt_port", cfg.get("port", 1883)),
                         user=user, password=password, keepalive=cfg.get("keepalive", 30),
                         handler=handler)
 
@@ -122,8 +125,7 @@ class App:
     def run(self):
         while True:
             try:
-                cfg = self.config["wifi"]
-                wifi.connect(cfg["ssid"], cfg["password"], 20, self.feed)
+                self.network = wifi.connect_any(self.config["wifi"], 20, self.feed)
                 self.feed()
                 if self.config.get("ntp", True) and not self.clock.synced:
                     self.clock.sync()
