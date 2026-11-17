@@ -3,9 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   apiGetBarns,
   apiGetDeviceLatestTelemetry,
-  apiGetDeviceReadings,
   apiGetDeviceTelemetry,
-  apiSendBarnCommand,
   apiSendDeviceCommand,
 } from '../../services/api';
 import ClimateCard from './ClimateCard';
@@ -37,8 +35,12 @@ export default function BarnDashboard({ devices, onNotify }) {
   }, []);
 
   useEffect(() => {
-    if (devices.length > 0 && !selectedDeviceId) {
+    if (devices && devices.length > 0 && !selectedDeviceId) {
       setSelectedDeviceId(devices[0].device_id);
+    } else if (!devices || devices.length === 0) {
+      // Không báo lỗi ở đây: App làm mới danh sách định kỳ nên sẽ spam thông báo.
+      // Giao diện đã hiện EmptyState khi chưa có thiết bị.
+      setSelectedDeviceId('');
     }
   }, [devices]);
 
@@ -51,46 +53,15 @@ export default function BarnDashboard({ devices, onNotify }) {
         let temp = null;
         let hum = null;
 
-        const dev = devices.find((d) => d.device_id === selectedDeviceId);
-        const isOnline = dev ? dev.online : true;
-
-        if (isOnline) {
-          try {
-            const readings = await apiGetDeviceReadings(selectedDeviceId);
-            const vals = readings.values || readings || {};
-            for (const key of Object.keys(vals)) {
-              const s = vals[key];
-              if (!s || typeof s !== 'object') continue;
-              if (s.temp !== undefined) temp = s.temp;
-              if (s.temperature !== undefined) temp = s.temperature;
-              if (s.hum !== undefined) hum = s.hum;
-              if (s.humidity !== undefined) hum = s.humidity;
-            }
-          } catch (readErr) {
-            // Thiết bị có thể vừa offline, fallback sang dữ liệu lưu gần nhất
-            const latest = await apiGetDeviceLatestTelemetry(selectedDeviceId).catch(() => null);
-            const vals = latest?.readings?.values || {};
-            for (const key of Object.keys(vals)) {
-              const s = vals[key];
-              if (!s || typeof s !== 'object') continue;
-              if (s.temp !== undefined) temp = s.temp;
-              if (s.temperature !== undefined) temp = s.temperature;
-              if (s.hum !== undefined) hum = s.hum;
-              if (s.humidity !== undefined) hum = s.humidity;
-            }
-          }
-        } else {
-          // Khi thiết bị offline, không gửi lệnh MQTT trực tiếp (tránh 409 Conflict)
-          const latest = await apiGetDeviceLatestTelemetry(selectedDeviceId).catch(() => null);
-          const vals = latest?.readings?.values || {};
-          for (const key of Object.keys(vals)) {
-            const s = vals[key];
-            if (!s || typeof s !== 'object') continue;
-            if (s.temp !== undefined) temp = s.temp;
-            if (s.temperature !== undefined) temp = s.temperature;
-            if (s.hum !== undefined) hum = s.hum;
-            if (s.humidity !== undefined) hum = s.humidity;
-          }
+        const latest = await apiGetDeviceLatestTelemetry(selectedDeviceId).catch(() => null);
+        const vals = latest?.readings?.values || {};
+        for (const key of Object.keys(vals)) {
+          const s = vals[key];
+          if (!s || typeof s !== 'object') continue;
+          if (s.temp !== undefined) temp = s.temp;
+          if (s.temperature !== undefined) temp = s.temperature;
+          if (s.hum !== undefined) hum = s.hum;
+          if (s.humidity !== undefined) hum = s.humidity;
         }
 
         if (!isMounted) return;
@@ -137,12 +108,13 @@ export default function BarnDashboard({ devices, onNotify }) {
       return;
     }
 
+    if (!devices || devices.length === 0 || !selectedDeviceId) {
+      onNotify('Chưa có thiết bị trong chuồng', 'error');
+      return;
+    }
+
     try {
-      if (selectedBarnId) {
-        await apiSendBarnCommand(selectedBarnId, 'relay_set', { channel, state });
-      } else if (selectedDeviceId) {
-        await apiSendDeviceCommand(selectedDeviceId, 'relay_set', { channel, state });
-      }
+      await apiSendDeviceCommand(selectedDeviceId, 'relay_set', { on: state === 'on' });
       onNotify(`Đã gửi lệnh bật/tắt quạt (${state})`);
     } catch (err) {
       onNotify('Lỗi gửi lệnh: ' + err.message, 'error');
@@ -172,7 +144,7 @@ export default function BarnDashboard({ devices, onNotify }) {
               </select>
             )}
 
-            {devices.length > 0 && (
+            {devices && devices.length > 0 && (
               <select
                 value={selectedDeviceId}
                 onChange={(e) => setSelectedDeviceId(e.target.value)}
@@ -188,7 +160,7 @@ export default function BarnDashboard({ devices, onNotify }) {
           </div>
         </div>
 
-        {devices.length === 0 ? (
+        {!devices || devices.length === 0 ? (
           <EmptyState
             icon="🔌"
             title="Chưa có thiết bị kết nối"

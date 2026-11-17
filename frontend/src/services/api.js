@@ -230,7 +230,7 @@ export async function apiGetDeviceTelemetry(deviceId, limit = 20) {
   return Array.isArray(res) ? res : [];
 }
 
-export async function apiSendDeviceCommand(deviceId, name, args = null, timeout_s = 5) {
+export async function apiSendDeviceCommand(deviceId, name, args = null, timeout_s = 10) {
   return request(`/devices/${deviceId}/commands`, {
     method: 'POST',
     body: JSON.stringify({ name, args, timeout_s }),

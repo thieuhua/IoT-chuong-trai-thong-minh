@@ -134,6 +134,10 @@ class DeviceCreateSchema(BaseModel):
     hw_version: Optional[str] = None
 
 
+class DeviceBarnUpdate(BaseModel):
+    barn_id: str | None
+
+
 class DeviceResponse(ORMBase):
     device_id: str
     hw_id: str

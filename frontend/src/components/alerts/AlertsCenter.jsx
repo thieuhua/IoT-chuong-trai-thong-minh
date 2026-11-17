@@ -57,7 +57,7 @@ export default function AlertsCenter({ alerts, onRefreshAlerts, onNotify }) {
             className="select-control"
           >
             <option value="all">Tất cả</option>
-            <option value="active">Đang kích hoạt</option>
+            <option value="open">Đang kích hoạt</option>
             <option value="acknowledged">Đã tiếp nhận</option>
             <option value="closed">Đã đóng</option>
           </select>
@@ -94,12 +94,15 @@ export default function AlertsCenter({ alerts, onRefreshAlerts, onNotify }) {
                   <td><code>{al.device_id || 'Hệ thống'}</code></td>
                   <td>{new Date(al.raised_at).toLocaleString()}</td>
                   <td>
-                    <StatusPill status={al.status} />
+                    <StatusPill
+                      status={al.status}
+                      label={al.status === 'open' ? 'Đang kích hoạt' : undefined}
+                    />
                   </td>
                   <td>{al.note || '--'}</td>
                   <td>
                     <div className="action-buttons-row">
-                      {al.status === 'active' && (
+                      {al.status === 'open' && (
                         <button
                           className="btn btn-secondary btn-xs"
                           onClick={() => handleAck(al.id)}

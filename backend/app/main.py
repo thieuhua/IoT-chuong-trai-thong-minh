@@ -700,6 +700,42 @@ def create_barn(
     return barn.create_barn(db, body, current_user.id)
 
 
+@app.put("/devices/{device_id}/barn")
+def update_device_barn(
+    device_id: str,
+    body: schemas.DeviceBarnUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin"))
+):
+    device = db.query(models.Device).filter(
+        models.Device.device_id == device_id
+    ).first()
+    if not device:
+        raise HTTPException(404, "Device not found")
+
+    if body.barn_id is not None:
+        target_barn = db.query(models.Barn).filter(
+            models.Barn.id == body.barn_id
+        ).first()
+        if not target_barn:
+            raise HTTPException(404, "Barn not found")
+
+    if device.barn_id == body.barn_id:
+        return {"device_id": device_id, "barn_id": device.barn_id}
+
+    try:
+        device.barn_id = body.barn_id
+        audit.record_change(
+            db, current_user.id, "device.barn.update", f"devices:{device_id}"
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return {"device_id": device_id, "barn_id": device.barn_id}
+
+
 @app.put("/barns/{barn_id}/assignments")
 def assign_barn(
     barn_id: str,

@@ -106,9 +106,9 @@ export default function App() {
               onClick={() => setActiveTab('alerts')}
             >
               Cảnh Báo
-              {alerts.filter((a) => a.status === 'active').length > 0 && (
+              {alerts.filter((a) => a.status === 'open').length > 0 && (
                 <span className="badge-count">
-                  {alerts.filter((a) => a.status === 'active').length}
+                  {alerts.filter((a) => a.status === 'open').length}
                 </span>
               )}
             </button>

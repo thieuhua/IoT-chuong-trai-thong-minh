@@ -134,8 +134,7 @@ class Device(Base):
 
     barn_id = Column(
         String(36),
-        ForeignKey("barns.id", ondelete="SET NULL"),
-        unique=True
+        ForeignKey("barns.id", ondelete="SET NULL")
     )
 
     name = Column(String(255), default="")

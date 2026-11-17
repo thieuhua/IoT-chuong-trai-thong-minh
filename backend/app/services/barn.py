@@ -78,57 +78,64 @@ def assign_users(
     if not target_barn:
         raise HTTPException(404, "Barn not found")
 
-    # Assumes body contains user_id and access_level
-    target_user = db.query(models.User).filter(
-        models.User.id == body.user_id
-    ).first()
+    for item in body.assignments:
+        target_user = db.query(models.User).filter(
+            models.User.id == item.user_id
+        ).first()
 
-    if not target_user:
-        raise HTTPException(404, "User not found")
+        if not target_user:
+            raise HTTPException(404, "User not found")
 
-    if target_user.role not in ["Operator", "Viewer"]:
-        raise HTTPException(
-            400,
-            "Only Operator or Viewer can be assigned to a barn"
-        )
+        if target_user.role not in ["Operator", "Viewer"]:
+            raise HTTPException(
+                400,
+                "Only Operator or Viewer can be assigned to a barn"
+            )
 
-    if body.access_level not in ["Operator", "Viewer"]:
-        raise HTTPException(400, "Invalid access level")
+        if item.access_level not in ["Operator", "Viewer"]:
+            raise HTTPException(400, "Invalid access level")
 
-    if target_user.role != body.access_level:
-        raise HTTPException(
-            400,
-            "Access level must match the user's role"
-        )
+        if target_user.role != item.access_level:
+            raise HTTPException(
+                400,
+                "Access level must match the user's role"
+            )
 
-    assignment = db.query(models.BarnAssignment).filter(
-        models.BarnAssignment.user_id == body.user_id,
-        models.BarnAssignment.barn_id == barn_id
-    ).first()
+    try:
+        for item in body.assignments:
+            assignment = db.query(models.BarnAssignment).filter(
+                models.BarnAssignment.user_id == item.user_id,
+                models.BarnAssignment.barn_id == barn_id
+            ).first()
 
-    changed = assignment is None or assignment.access_level != body.access_level
-    if assignment:
-        assignment.access_level = body.access_level
-    else:
-        assignment = models.BarnAssignment(
-            user_id=body.user_id,
-            barn_id=barn_id,
-            access_level=body.access_level
-        )
-        db.add(assignment)
+            changed = assignment is None or assignment.access_level != item.access_level
+            if assignment:
+                assignment.access_level = item.access_level
+            else:
+                assignment = models.BarnAssignment(
+                    user_id=item.user_id,
+                    barn_id=barn_id,
+                    access_level=item.access_level
+                )
+                db.add(assignment)
 
-    if changed:
-        record_change(
-            db, actor_id, "barn.assignment.update",
-            f"barn_assignments:{barn_id}:{body.user_id}"
-        )
+            if changed:
+                record_change(
+                    db, actor_id, "barn.assignment.update",
+                    f"barn_assignments:{barn_id}:{item.user_id}"
+                )
         db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     return {
-        "message": "User assigned successfully",
+        "message": "Users assigned successfully",
         "barn_id": barn_id,
-        "user_id": body.user_id,
-        "access_level": body.access_level
+        "assignments": [
+            {"user_id": item.user_id, "access_level": item.access_level}
+            for item in body.assignments
+        ]
     }
 
 
