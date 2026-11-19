@@ -48,6 +48,24 @@ def test_cli_connection_error(tmp_path, monkeypatch):
     assert ota_push.main(['--device', 'test', '--src', str(tmp_path)]) == 2
 
 
+def test_requests_carry_admin_token(monkeypatch):
+    sent = []
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+        def read(self, *args):
+            return b'{"ok": true}'
+    def urlopen(req, timeout):
+        sent.append(req.get_header('Authorization'))
+        return Response()
+    monkeypatch.setattr(ota_push, '_auth', {'admin': None, 'header': {'Authorization': 'Bearer t'}})
+    monkeypatch.setattr(ota_push.request, 'urlopen', urlopen)
+    assert ota_push.json_request('http://test/firmware-jobs/x') == {'ok': True}
+    assert sent == ['Bearer t']
+
+
 @pytest.mark.parametrize('stage', ['reboot', 'trial'])
 def test_no_wait_leaves_server_watching_at_install(tmp_path, monkeypatch, capsys, stage):
     (tmp_path / 'app.py').write_bytes(b'app')

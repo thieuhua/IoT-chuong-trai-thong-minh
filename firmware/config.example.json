@@ -69,6 +69,14 @@
       "active_low": false,
       "initial": false,
       "max_on_ms": 0
+    },
+    {
+      "driver": "relay",
+      "name": "relay2",
+      "pin": 27,
+      "active_low": false,
+      "initial": false,
+      "max_on_ms": 0
     }
   ]
 }

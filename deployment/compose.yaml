@@ -31,5 +31,56 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  # Profile "app": `docker compose -f deployment/compose.yaml --profile app up -d --build`
+  # starts the broker, backend and frontend together. MySQL stays on the laptop
+  # (DATABASE_URL in .env; the backend entrypoint swaps 127.0.0.1 for the Docker host).
+  backend:
+    profiles: ["app"]
+    build: ../backend
+    env_file: ${IOT_ENV_FILE:-.env}
+    environment:
+      IOT_BROKER_HOST: mosquitto
+      IOT_BROKER_PORT: "1883"
+      IOT_BROKER_TLS: "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # demo/servo_slider and backend/tools/ota_push.py call http://127.0.0.1:8000.
+      - "${IOT_BACKEND_PORT:-8000}:8000"
+    volumes:
+      - backend-data:/srv/backend/data
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  frontend:
+    profiles: ["app"]
+    build: ../frontend
+    ports:
+      - "${IOT_WEB_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
 volumes:
   mosquitto-data:
+  backend-data:

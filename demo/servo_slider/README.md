@@ -20,14 +20,20 @@ Mosquitto tới ESP32. Dùng firmware và broker hiện tại.
    trên servo. Trang kiểm tra mẫu nhiệt độ và độ ẩm mới nhất mỗi 2 giây.
    Thời điểm hiển thị là lúc backend nhận mẫu.
 
-Thẻ Relay bật/tắt relay ở G26 (lệnh `relay_set`) và đọc trạng thái bằng
-`actuator_state` mỗi 2–5 giây. Chọn "Tự tắt sau" trước khi bật để relay tự
-tắt trên ESP32, kể cả khi mất mạng. Cần firmware có driver relay và mục
-`relay` trong `config.json`.
+Hai thẻ Relay bật/tắt relay ở G26 (`relay`) và G27 (`relay2`) bằng lệnh `relay_set`, đọc
+trạng thái bằng `actuator_state` mỗi 2–5 giây. Hai relay điều khiển độc lập. Chọn "Tự tắt sau"
+trước khi bật để relay tự tắt trên ESP32, kể cả khi mất mạng. Cần firmware có driver relay và hai
+mục `relay`, `relay2` trong `config.json` (xem `firmware/config.example.json`).
+
+Server tự ký token của một tài khoản Admin đang hoạt động bằng `JWT_SECRET_KEY` trong
+`deployment/.env` (cần `DATABASE_URL` để tìm tài khoản), làm mới trước khi hết hạn và không gửi
+token về điện thoại. `--admin <username>` chọn tài khoản Admin cụ thể. Vì vậy ai mở được trang
+cũng điều khiển được thiết bị với quyền Admin; chỉ chạy trên hotspot riêng.
 
 Server mặc định chuyển tiếp đến FastAPI ở cổng 8000. Dùng `--api-port`
 nếu FastAPI chạy cổng khác, `--actuator` nếu tên servo khác `servo`,
-`--sensor` nếu tên cảm biến khác `room` và `--relay` nếu tên relay khác `relay`.
+`--sensor` nếu tên cảm biến khác `room`, `--relay` và `--relay2` nếu tên hai relay khác
+`relay`, `relay2`.
 Nếu điện thoại không mở được trang, kiểm tra IP hotspot và quyền truy cập
 TCP 8081 trong Windows Firewall. Demo dành cho hotspot riêng vì trang
 điều khiển không có đăng nhập. Nhấn Ctrl+C để dừng server demo.

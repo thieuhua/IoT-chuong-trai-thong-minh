@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -48,9 +48,37 @@ def default_version(files: dict[str, bytes]) -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S-") + digest.hexdigest()[:8]
 
 
+# An OTA job with trial confirmation can take minutes; the token only lives in this process.
+TOKEN_LIFETIME = timedelta(hours=2)
+_auth = {"admin": None, "header": None}
+
+
+def auth_header() -> dict[str, str]:
+    """Bearer token of an active Admin, signed with JWT_SECRET_KEY from deployment/.env."""
+    if _auth["header"] is None:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from app import models
+        from app.database import SessionLocal
+        from app.services import auth
+        if SessionLocal.kw.get("bind") is None:
+            raise ValueError("DATABASE_URL is missing in deployment/.env")
+        with SessionLocal() as db:
+            query = db.query(models.User).filter(models.User.role == "Admin",
+                                                 models.User.status == "active")
+            if _auth["admin"]:
+                query = query.filter(models.User.username == _auth["admin"])
+            user = query.order_by(models.User.username).first()
+            if user is None:
+                raise ValueError("No active Admin account"
+                                 + (f" named {_auth['admin']}" if _auth["admin"] else ""))
+            token, _ = auth.create_token(user.id, "access", TOKEN_LIFETIME)
+        _auth["header"] = {"Authorization": f"Bearer {token}"}
+    return _auth["header"]
+
+
 def json_request(url: str, body: dict | None = None):
     data = None if body is None else json.dumps(body).encode("utf-8")
-    req = request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    req = request.Request(url, data=data, headers={"Content-Type": "application/json", **auth_header()})
     with request.urlopen(req, timeout=30) as response:
         return json.load(response)
 
@@ -63,7 +91,9 @@ def main(argv=None) -> int:
     parser.add_argument("--with-config", action="store_true")
     parser.add_argument("--server", default="http://127.0.0.1:8000")
     parser.add_argument("--no-wait", action="store_true", help="Skip device confirmation; still poll the upload job")
+    parser.add_argument("--admin", help="Admin username used to sign the token (default: first active Admin)")
     args = parser.parse_args(argv)
+    _auth["admin"] = args.admin
     try:
         files = bundle(args.src, args.with_config)
         version = args.version or default_version(files)

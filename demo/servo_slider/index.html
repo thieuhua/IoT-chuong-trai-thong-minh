@@ -37,12 +37,12 @@
   .lamp { width: 22px; height: 22px; flex: none; border-radius: 50%; background: #3a4f63;
           box-shadow: inset 0 0 0 2px #52687d; }
   .lamp[data-on="true"] { background: #7dffb0; box-shadow: 0 0 14px #7dffb0; }
-  #relay-label { flex: 1; text-align: left; font-weight: 700; }
-  #relay-toggle[aria-pressed="true"] { background: #2f6b4b; border-color: #58b884; }
+  .relay-label { flex: 1; text-align: left; font-weight: 700; }
+  .relay-toggle[aria-pressed="true"] { background: #2f6b4b; border-color: #58b884; }
   select { min-height: 44px; padding: 4px 8px; border: 1px solid #41607e; border-radius: 10px;
            background: #233f5a; color: inherit; font: inherit; }
-  #relay-status { min-height: 1.4em; margin: 10px 0 0; font-size: .85rem; }
-  #relay-status[data-error="true"] { color: #ffb5ab; }
+  .relay-status { min-height: 1.4em; margin: 10px 0 0; font-size: .85rem; }
+  .relay-status[data-error="true"] { color: #ffb5ab; }
 </style>
 <main>
   <h1>Điều khiển servo (G14)</h1>
@@ -68,23 +68,41 @@
     </dl>
     <p id="reading-status">Đang tải số đo…</p>
   </section>
-  <section class="relay" aria-labelledby="relay-title">
-    <h2 id="relay-title">Relay (G26)</h2>
+  <section class="relay" data-path="/relay" aria-labelledby="relay-title">
+    <h2 id="relay-title">Relay 1 (G26)</h2>
     <div class="relay-row">
-      <span class="lamp" id="relay-lamp" aria-hidden="true"></span>
-      <span id="relay-label">Chưa rõ</span>
-      <button type="button" id="relay-toggle" aria-pressed="false" disabled>Bật</button>
+      <span class="lamp" aria-hidden="true"></span>
+      <span class="relay-label">Chưa rõ</span>
+      <button type="button" class="relay-toggle" aria-pressed="false" disabled>Bật</button>
     </div>
     <div class="relay-row">
       <label for="relay-duration" style="margin:0;flex:1">Tự tắt sau</label>
-      <select id="relay-duration">
+      <select id="relay-duration" class="relay-duration">
         <option value="">Không tự tắt</option>
         <option value="5000">5 giây</option>
         <option value="30000">30 giây</option>
         <option value="300000">5 phút</option>
       </select>
     </div>
-    <p id="relay-status" role="status">Đang đọc trạng thái relay…</p>
+    <p class="relay-status" role="status">Đang đọc trạng thái relay…</p>
+  </section>
+  <section class="relay" data-path="/relay2" aria-labelledby="relay2-title">
+    <h2 id="relay2-title">Relay 2 (G27)</h2>
+    <div class="relay-row">
+      <span class="lamp" aria-hidden="true"></span>
+      <span class="relay-label">Chưa rõ</span>
+      <button type="button" class="relay-toggle" aria-pressed="false" disabled>Bật</button>
+    </div>
+    <div class="relay-row">
+      <label for="relay2-duration" style="margin:0;flex:1">Tự tắt sau</label>
+      <select id="relay2-duration" class="relay-duration">
+        <option value="">Không tự tắt</option>
+        <option value="5000">5 giây</option>
+        <option value="30000">30 giây</option>
+        <option value="300000">5 phút</option>
+      </select>
+    </div>
+    <p class="relay-status" role="status">Đang đọc trạng thái relay…</p>
   </section>
 </main>
 <script>
@@ -197,11 +215,14 @@
   }
   updateReadings();
 
-  const relayLamp = document.querySelector("#relay-lamp");
-  const relayLabel = document.querySelector("#relay-label");
-  const relayToggle = document.querySelector("#relay-toggle");
-  const relayDuration = document.querySelector("#relay-duration");
-  const relayStatus = document.querySelector("#relay-status");
+  // One independent controller per relay card; data-path is the demo server route.
+  function setupRelay(card) {
+  const path = card.dataset.path;
+  const relayLamp = card.querySelector(".lamp");
+  const relayLabel = card.querySelector(".relay-label");
+  const relayToggle = card.querySelector(".relay-toggle");
+  const relayDuration = card.querySelector(".relay-duration");
+  const relayStatus = card.querySelector(".relay-status");
   let relayOn = null;
   let relayBusy = false;
 
@@ -223,7 +244,7 @@
   }
 
   async function relayRequest(options) {
-    const response = await fetch("/relay", options);
+    const response = await fetch(path, options);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     return result;
@@ -268,5 +289,7 @@
     }
   });
   refreshRelay();
+  }
+  document.querySelectorAll(".relay[data-path]").forEach(setupRelay);
 </script>
 </html>
