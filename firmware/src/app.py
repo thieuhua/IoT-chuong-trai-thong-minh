@@ -86,6 +86,8 @@ class App:
                   "ota": ota.load_state().get("state", "ok"),
                   "sensors": [sensor.meta() for sensor in self.sensors],
                   "commands": list(commands.REGISTRY), "interval_s": self.interval_s}
+        if self.config.get("hw_version"):
+            result["hw"] = self.config["hw_version"]
         if self.actuators:
             result["actuators"] = [actuator.meta() for actuator in self.actuators]
         return result

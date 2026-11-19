@@ -13,6 +13,21 @@ class RegistrationStatus(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     REVOKED = "revoked"
+    MAINTENANCE = "maintenance"
+    SUSPENDED = "suspended"
+    DECOMMISSIONED = "decommissioned"
+
+
+class DeviceLifecycle(str, Enum):
+    """What Device.lifecycle reports. Derived on read, never stored (docs/protocol.md section 10)."""
+
+    PROVISIONED = "provisioned"  # approved, has not connected yet
+    ACTIVE = "active"
+    OFFLINE = "offline"
+    FAULT = "fault"  # online, but the last telemetry reported sensor errors
+    MAINTENANCE = "maintenance"
+    SUSPENDED = "suspended"
+    DECOMMISSIONED = "decommissioned"
 
 
 @dataclass
@@ -43,6 +58,9 @@ class Device:
     online: bool = False
     last_seen: datetime | None = None
     registered_at: datetime | None = None
+    hw: str = ""
+    actuators: list[dict[str, Any]] = field(default_factory=list)
+    lifecycle: str = DeviceLifecycle.PROVISIONED.value
 
     def sensor(self, name: str) -> SensorSpec | None:
         return next((s for s in self.sensors if s.name == name), None)
@@ -95,5 +113,13 @@ class TelemetryRecord:
 class StatusEvent:
     device_id: str
     online: bool
+    reason: str | None
+    at: datetime
+
+
+@dataclass
+class LifecycleEvent:
+    device_id: str
+    state: str  # a DeviceLifecycle value
     reason: str | None
     at: datetime

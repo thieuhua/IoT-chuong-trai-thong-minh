@@ -3,17 +3,59 @@ from __future__ import annotations
 import asyncio
 import json
 
+from types import SimpleNamespace
+
 from fastapi import Request
 import pytest
 
-from app.main import app, events
+from app.main import app, events, get_current_user, get_db
 from iot_core import (BrokerAuthError, CommandFailed, CommandTimeout, DeviceNotFound,
                       DeviceOffline, InvalidState, RegistrationNotFound)
 from test_gateway import request
 
 
+class FakeDB:
+    """Stands in for MySQL: these tests exercise the gateway routes, not the app tables."""
+
+    def query(self, *args):
+        return self
+
+    def filter(self, *args):
+        return self
+
+    def first(self):
+        return SimpleNamespace(barn_id=None, name='', interval_s=None)
+
+    def add(self, entity):
+        pass
+
+    def commit(self):
+        pass
+
+    def flush(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def admin_user():
+    return SimpleNamespace(id='admin-id', role='Admin', status='active')
+
+
 async def http(gateway, method, path, body=None, query=b''):
     app.state.gateway = gateway
+    saved = dict(app.dependency_overrides)
+    app.dependency_overrides.setdefault(get_current_user, admin_user)
+    app.dependency_overrides.setdefault(get_db, FakeDB)
+    try:
+        return await _http(method, path, body, query)
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(saved)
+
+
+async def _http(method, path, body, query):
     messages = []
     scope = dict(type='http', asgi={'version': '3.0'}, http_version='1.1', method=method,
                  scheme='http', path=path, raw_path=path.encode(), root_path='', query_string=query,

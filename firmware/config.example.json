@@ -1,4 +1,5 @@
 {
+  "hw_version": "esp32-devkit-v1",
   "wifi": [
     {
       "ssid": "YOUR_WIFI_SSID",

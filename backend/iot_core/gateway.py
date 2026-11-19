@@ -21,8 +21,8 @@ from .broker_auth import BrokerAuth
 from .config import GatewayConfig
 from .errors import (CommandFailed, CommandTimeout, DeviceNotFound, DeviceOffline,
                      InvalidState, RegistrationNotFound)
-from .models import (Device, Readings, Registration, RegistrationStatus, SensorSpec,
-                     StatusEvent, TelemetryRecord)
+from .models import (Device, DeviceLifecycle, LifecycleEvent, Readings, Registration,
+                     RegistrationStatus, SensorSpec, StatusEvent, TelemetryRecord)
 from .provisioning import handle_request, reply
 from .registry import DeviceRegistry
 from .telemetry import TelemetryStore
@@ -31,6 +31,12 @@ from .transport import MqttTransport
 T = TypeVar("T")
 Callback = Callable[[T], "Awaitable[None] | None"]
 Unsubscribe = Callable[[], None]
+
+# Registration states that override what the connection says about a device.
+HOLD_STATES = (RegistrationStatus.MAINTENANCE, RegistrationStatus.SUSPENDED,
+               RegistrationStatus.DECOMMISSIONED)
+# A device under maintenance can be inspected but not driven.
+MAINTENANCE_COMMANDS = frozenset({"ping", "get_info", "read", "actuator_state"})
 
 
 class DeviceGateway:
@@ -43,7 +49,9 @@ class DeviceGateway:
         self.telemetry = telemetry
         self.broker_auth = broker_auth
         self._pending: dict[str, tuple[str, asyncio.Future[dict[str, Any]]]] = {}
-        self._events = {key: [] for key in ("telemetry", "status", "registration", "device")}
+        self._events = {key: [] for key in ("telemetry", "status", "registration", "device", "lifecycle")}
+        self._holds: dict[str, RegistrationStatus] = {}  # device_id -> a HOLD_STATES value
+        self._faults: set[str] = set()  # device_ids whose last telemetry reported sensor errors
         self._provision_lock = asyncio.Lock()
         self._started = False
 
@@ -80,6 +88,8 @@ class DeviceGateway:
         await self.telemetry.open()
         self.transport.on_connection_change(self._connection_changed)
         try:
+            self._holds = {r.device_id: r.status for r in await self.registry.list_registrations(None)
+                           if r.device_id and r.status in HOLD_STATES}
             await self.transport.start()
             await self.broker_auth.start()
             for topic in protocol.BACKEND_SUBSCRIPTIONS:
@@ -113,7 +123,7 @@ class DeviceGateway:
 
     # Devices -----------------------------------------------------------------
     async def list_devices(self, online: bool | None = None) -> list[Device]:
-        return [device for device in await self.registry.list_devices()
+        return [self._with_lifecycle(device) for device in await self.registry.list_devices()
                 if online is None or device.online == online]
 
     async def get_device(self, device_id: str) -> Device:
@@ -121,6 +131,17 @@ class DeviceGateway:
         device = await self.registry.get_device(device_id)
         if device is None:
             raise DeviceNotFound(device_id)
+        return self._with_lifecycle(device)
+
+    def _with_lifecycle(self, device: Device) -> Device:
+        hold = self._holds.get(device.device_id)
+        if hold is not None:
+            state = DeviceLifecycle(hold.value)
+        elif device.online:
+            state = DeviceLifecycle.FAULT if device.device_id in self._faults else DeviceLifecycle.ACTIVE
+        else:
+            state = DeviceLifecycle.OFFLINE if device.last_seen else DeviceLifecycle.PROVISIONED
+        device.lifecycle = state.value
         return device
 
     async def rename(self, device_id: str, name: str) -> Device:
@@ -137,9 +158,13 @@ class DeviceGateway:
 
         Raises DeviceNotFound (unknown or revoked), DeviceOffline (known but offline: no publish),
         CommandTimeout (no answer within timeout_s or config.command_timeout_s),
-        CommandFailed (ok=false). Returns resp.data.result.
+        CommandFailed (ok=false), InvalidState (suspended, decommissioned, or a command that
+        changes the device while it is under maintenance). Returns resp.data.result.
         """
         device = await self.get_device(device_id)
+        hold = self._holds.get(device_id)
+        if hold is not None and (hold != RegistrationStatus.MAINTENANCE or name not in MAINTENANCE_COMMANDS):
+            raise InvalidState(f"{device_id} is {hold.value}")
         if not device.online:
             raise DeviceOffline(device_id)
         timeout = self.config.command_timeout_s if timeout_s is None else timeout_s
@@ -248,19 +273,109 @@ class DeviceGateway:
 
     async def revoke(self, device_id: str) -> None:
         """Remove the broker account, clear retained status/meta (empty retained publish),
-        delete the device and its telemetry, mark the registration revoked."""
+        delete the device and its telemetry, mark the registration revoked. The hardware may
+        register again; use decommission() to retire it. Raises InvalidState if decommissioned."""
         device = await self.get_device(device_id)
+        if self._holds.get(device_id) == RegistrationStatus.DECOMMISSIONED:
+            raise InvalidState(f"{device_id} is decommissioned")
         await self.broker_auth.remove_device_account(device_id)
-        for leaf in (protocol.STATUS, protocol.META):
-            await self.transport.publish(protocol.device_topic(device_id, leaf), b"", qos=1, retain=True)
+        await self._clear_retained(device_id)
         await self.registry.delete_device(device_id)
         await self.telemetry.delete_device(device_id)
+        self._holds.pop(device_id, None)
+        self._faults.discard(device_id)
         registration = await self.registry.get_registration(device.hw_id)
         if registration:
             registration.status = RegistrationStatus.REVOKED
             registration.password = None
             registration.updated_at = datetime.now(timezone.utc)
             await self.registry.save_registration(registration)
+
+    async def _clear_retained(self, device_id: str) -> None:
+        for leaf in (protocol.STATUS, protocol.META):
+            await self.transport.publish(protocol.device_topic(device_id, leaf), b"", qos=1, retain=True)
+
+    # Lifecycle holds (docs/protocol.md section 10) -------------------------------
+    async def set_maintenance(self, device_id: str, reason: str = "") -> Device:
+        """Active -> maintenance: telemetry continues, only read-only commands are accepted."""
+        async with self._provision_lock:
+            device, registration = await self._held(device_id, RegistrationStatus.APPROVED)
+            return await self._set_hold(device, registration, RegistrationStatus.MAINTENANCE, reason)
+
+    async def suspend(self, device_id: str, reason: str = "") -> Device:
+        """Block telemetry and commands but keep the account, data and assignment. resume() undoes it."""
+        async with self._provision_lock:
+            device, registration = await self._held(device_id, RegistrationStatus.APPROVED,
+                                                    RegistrationStatus.MAINTENANCE)
+            await self.broker_auth.suspend_device_account(device_id)
+            return await self._set_hold(device, registration, RegistrationStatus.SUSPENDED, reason)
+
+    async def resume(self, device_id: str) -> Device:
+        """End maintenance or a suspension."""
+        async with self._provision_lock:
+            device, registration = await self._held(device_id, RegistrationStatus.MAINTENANCE,
+                                                    RegistrationStatus.SUSPENDED)
+            if registration.status == RegistrationStatus.SUSPENDED:
+                await self.broker_auth.resume_device_account(device_id)
+            return await self._set_hold(device, registration, RegistrationStatus.APPROVED, "")
+
+    async def decommission(self, device_id: str, reason: str = "") -> Device:
+        """Retire the hardware: delete its broker account and refuse new registrations from it.
+
+        The device row and telemetry stay as history. Only recommission() lifts this.
+        """
+        async with self._provision_lock:
+            device, registration = await self._held(device_id, RegistrationStatus.APPROVED,
+                                                    RegistrationStatus.MAINTENANCE,
+                                                    RegistrationStatus.SUSPENDED)
+            await self.broker_auth.remove_device_account(device_id)
+            await self._clear_retained(device_id)
+            device.online = False
+            await self.registry.save_device(device)
+            return await self._set_hold(device, registration, RegistrationStatus.DECOMMISSIONED, reason)
+
+    async def recommission(self, hw_id: str) -> Registration:
+        """Let decommissioned hardware register again. It still needs a new approval."""
+        async with self._provision_lock:
+            registration = await self.registry.get_registration(hw_id)
+            if registration is None:
+                raise RegistrationNotFound(hw_id)
+            if registration.status != RegistrationStatus.DECOMMISSIONED:
+                raise InvalidState(registration.status.value)
+            registration.status = RegistrationStatus.REVOKED
+            registration.reason = None
+            registration.updated_at = datetime.now(timezone.utc)
+            await self.registry.save_registration(registration)
+            self._holds.pop(registration.device_id, None)
+            return registration
+
+    async def _held(self, device_id: str, *allowed: RegistrationStatus) -> tuple[Device, Registration]:
+        device = await self.get_device(device_id)
+        registration = await self.registry.get_registration(device.hw_id)
+        if registration is None:
+            raise RegistrationNotFound(device.hw_id)
+        if registration.status not in allowed:
+            raise InvalidState(registration.status.value)
+        return device, registration
+
+    async def _set_hold(self, device: Device, registration: Registration, status: RegistrationStatus,
+                        reason: str) -> Device:
+        registration.status = status
+        registration.reason = reason or None
+        registration.updated_at = datetime.now(timezone.utc)
+        await self.registry.save_registration(registration)
+        if status in HOLD_STATES:
+            self._holds[device.device_id] = status
+        else:
+            self._holds.pop(device.device_id, None)
+        self._with_lifecycle(device)
+        await self._emit_lifecycle(device, reason or None)
+        await self._emit("device", device)
+        return device
+
+    async def _emit_lifecycle(self, device: Device, reason: str | None) -> None:
+        await self._emit("lifecycle", LifecycleEvent(device.device_id, device.lifecycle, reason,
+                                                     datetime.now(timezone.utc)))
 
     # Events ----------------------------------------------------------------------
     # Callbacks may be sync or async; an exception in one is logged and does not affect others.
@@ -278,6 +393,10 @@ class DeviceGateway:
     def on_device_updated(self, callback: Callback[Device]) -> Unsubscribe:
         """Fires after meta changes the stored device (sensors, fw, interval)."""
         return self._subscribe_event("device", callback)
+
+    def on_lifecycle_change(self, callback: Callback[LifecycleEvent]) -> Unsubscribe:
+        """Fires on maintenance, suspend, resume, decommission, and when a sensor fault starts or clears."""
+        return self._subscribe_event("lifecycle", callback)
 
     async def _approve(self, hw_id: str, *, device_id: str | None = None, name: str = "") -> Device:
         registration = await self.registry.get_registration(hw_id)
@@ -330,6 +449,11 @@ class DeviceGateway:
         if info.kind == protocol.PROVISION_REQUEST:
             await handle_request(self, info.key, data)
             return
+        hold = self._holds.get(info.key)
+        if hold == RegistrationStatus.DECOMMISSIONED or (
+                hold == RegistrationStatus.SUSPENDED and info.kind == protocol.TELEMETRY):
+            logging.getLogger("iot_core").debug("Dropped %s from %s device", info.kind, hold.value)
+            return
         device = await self.registry.get_device(info.key)
         now = datetime.now(timezone.utc)
         if device is None and self.config.adopt_devices and info.kind == protocol.META:
@@ -352,7 +476,7 @@ class DeviceGateway:
                 await self._emit("status", StatusEvent(info.key, online, data.get("reason"), now))
         elif info.kind == protocol.META:
             try:
-                for key in ("model", "fw", "commands", "interval_s"):
+                for key in ("model", "fw", "hw", "actuators", "commands", "interval_s"):
                     if key in data:
                         setattr(device, key, data[key])
                 if "sensors" in data:
@@ -361,7 +485,7 @@ class DeviceGateway:
                 logging.getLogger("iot_core").warning("Invalid meta on %s", topic)
                 return
             await self.registry.save_device(device)
-            await self._emit("device", device)
+            await self._emit("device", self._with_lifecycle(device))
         elif info.kind == protocol.TELEMETRY:
             record = TelemetryRecord(info.key, now, envelope.ts, Readings.from_data(data))
             await self.telemetry.append(record)
@@ -369,6 +493,12 @@ class DeviceGateway:
             if not device.online:
                 await self._emit("status", StatusEvent(info.key, True, None, now))
             await self._emit("telemetry", record)
+            errors = data.get("errors")
+            if bool(errors) != (info.key in self._faults):
+                (self._faults.add if errors else self._faults.discard)(info.key)
+                device.online = True
+                await self._emit_lifecycle(self._with_lifecycle(device),
+                                           ", ".join(sorted(errors)) if errors else None)
         elif info.kind == protocol.RESP:
             pending = self._pending.get(data.get("re"))
             if pending and pending[0] == info.key and not pending[1].done():

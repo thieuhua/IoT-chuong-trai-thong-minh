@@ -16,11 +16,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger("iot_core")
 
 
-async def reply(gateway: DeviceGateway, registration: Registration) -> None:
-    message = protocol.provision_response(
-        registration.status.value,
-        registration.device_id if registration.status == State.APPROVED else None,
-        registration.reason if registration.status == State.REJECTED else None)
+async def reply(gateway: DeviceGateway, registration: Registration, *, refuse: bool = False) -> None:
+    """Devices only know pending/approved/rejected, so lifecycle holds are sent as one of those."""
+    state = registration.status
+    if state == State.REJECTED:
+        message = protocol.provision_response(state.value, None, registration.reason)
+    elif refuse or state in (State.SUSPENDED, State.DECOMMISSIONED):
+        message = protocol.provision_response(State.REJECTED.value, None, registration.reason or state.value)
+    elif state in (State.APPROVED, State.MAINTENANCE):
+        message = protocol.provision_response(State.APPROVED.value, registration.device_id, None)
+    else:
+        message = protocol.provision_response(state.value, None, None)
     await gateway.transport.publish(protocol.provision_response_topic(registration.hw_id),
                                     message.encode(), qos=1, retain=False)
 
@@ -40,11 +46,16 @@ async def handle_request(gateway: DeviceGateway, hw_id: str, data: dict) -> None
     async with gateway._provision_lock:
         registration = await gateway.registry.get_registration(hw_id)
         digest = hashlib.sha256(password.encode()).hexdigest()
-        if registration and registration.status == State.REJECTED:
+        if registration and registration.status in (State.REJECTED, State.SUSPENDED, State.DECOMMISSIONED):
             await reply(gateway, registration)
             return
-        if registration and registration.status == State.APPROVED and registration.password_hash == digest:
+        if (registration and registration.status in (State.APPROVED, State.MAINTENANCE)
+                and registration.password_hash == digest):
             await reply(gateway, registration)
+            return
+        if registration and registration.status == State.MAINTENANCE:
+            # A new password would reset the registration and silently end the maintenance hold.
+            await reply(gateway, registration, refuse=True)
             return
         now = datetime.now(timezone.utc)
         if registration is None or registration.status == State.REVOKED:

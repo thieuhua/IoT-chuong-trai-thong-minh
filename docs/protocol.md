@@ -103,7 +103,7 @@ Quy tắc:
 
 ```json
 {
-  "hw_id": "a0b1c2d3e4f5", "model": "esp32", "fw": "0.1.0",
+  "hw_id": "a0b1c2d3e4f5", "model": "esp32", "fw": "0.1.0", "hw": "esp32-devkit-v1",
   "sensors": [{"name": "room", "driver": "dht11", "fields": {"temperature": "°C", "humidity": "%"}}],
   "commands": ["ping", "get_info", "read", "set_interval", "reboot"],
   "interval_s": 10,
@@ -111,8 +111,9 @@ Quy tắc:
 }
 ```
 
-`actuators` chỉ có khi thiết bị khai báo cơ cấu chấp hành (servo, relay...). Backend hiện lưu nguyên `meta`
-nhưng chưa có trường riêng cho actuator; trạng thái đọc qua lệnh `get_info` hoặc kết quả lệnh điều khiển.
+`hw` là phiên bản phần cứng, lấy từ `hw_version` trong `config.json`, không có thì bỏ trường này.
+`actuators` chỉ có khi thiết bị khai báo cơ cấu chấp hành (servo, relay...). Backend đưa danh sách này vào
+`Device.actuators`; trạng thái đọc qua lệnh `get_info` hoặc kết quả lệnh điều khiển.
 
 ## 6. Telemetry
 
@@ -213,3 +214,26 @@ Chế độ `AUTH_MODE=none` (giống demo cũ) bỏ toàn bộ phần này: bro
 - ESP32 dùng `umqtt.simple` với clean session: lệnh gửi khi thiết bị offline sẽ mất.
 - OTA dựa vào ACL của broker (chỉ backend publish được `cmd`). Với cấu hình tunnel, TLS bảo vệ kết nối từ backend tới broker. Manifest chưa có chữ ký.
   Ai có tài khoản `backend` là nạp được code vào thiết bị.
+
+## 10. Vòng đời thiết bị
+
+`Device.lifecycle` được tính khi đọc, không lưu riêng. Trạng thái giữ (bảo trì, tạm khóa, ngừng dùng) nằm trong `Registration.status`.
+
+```text
+pending ─ approve ▶ provisioned ─ kết nối ▶ active ◀─▶ offline
+                                              │  ▲
+                              lỗi cảm biến ▶ fault
+active ─ set_maintenance ▶ maintenance ─ resume ▶ active
+active, maintenance ─ suspend ▶ suspended ─ resume ▶ active
+active, maintenance, suspended ─ decommission ▶ decommissioned ─ recommission ▶ chờ đăng ký lại
+```
+
+| Trạng thái | Telemetry | Lệnh | Tài khoản broker | Đăng ký lại |
+| --- | --- | --- | --- | --- |
+| `maintenance` | vẫn lưu | chỉ `ping`, `get_info`, `read`, `actuator_state` | giữ nguyên | không đổi được mật khẩu |
+| `suspended` | bị chặn ở broker và backend | từ chối | giữ, bỏ quyền publish `telemetry` | bị từ chối |
+| `decommissioned` | bị bỏ | từ chối | đã xóa | bị từ chối, giữ lịch sử |
+
+- Tạm khóa không xóa tài khoản vì firmware quên danh tính sau 3 lần đăng nhập bị từ chối. Quyền subscribe `cmd` cũng được giữ vì `umqtt.simple` báo lỗi khi SUBSCRIBE bị từ chối.
+- Thiết bị chỉ biết `pending`, `approved`, `rejected`, nên backend trả `rejected` kèm `reason` cho thiết bị đang bị giữ. Firmware không cần sửa.
+- `revoke` khác `decommission`: `revoke` xóa thiết bị cùng telemetry và cho phép đăng ký lại ngay.

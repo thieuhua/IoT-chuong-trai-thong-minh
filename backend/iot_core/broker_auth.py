@@ -28,6 +28,15 @@ class BrokerAuth(ABC):
     async def remove_device_account(self, device_id: str) -> None:
         """Delete the account; the broker disconnects the device. Missing account is not an error."""
 
+    async def suspend_device_account(self, device_id: str) -> None:
+        """Stop the device's telemetry at the broker while it can still log in.
+
+        Login must keep working: firmware forgets its identity after repeated login refusals.
+        """
+
+    async def resume_device_account(self, device_id: str) -> None:
+        """Undo suspend_device_account."""
+
 
 class NoAuth(BrokerAuth):
     """Anonymous broker: nothing to create."""
@@ -123,3 +132,16 @@ class DynSecAuth(BrokerAuth):
         async with self._lock(device_id):
             await self._checked("deleteClient", username=device_id, allowed=("Client not found",))
             await self._checked("deleteRole", rolename=f"dev-{device_id}", allowed=("Role not found",))
+
+    async def suspend_device_account(self, device_id: str) -> None:
+        # Only telemetry is removed: umqtt.simple raises on a refused SUBSCRIBE, so cmd must stay.
+        async with self._lock(device_id):
+            await self._checked("removeRoleACL", rolename=f"dev-{device_id}", acltype="publishClientSend",
+                                topic=protocol.device_topic(device_id, protocol.TELEMETRY),
+                                allowed=("ACL not found",))
+
+    async def resume_device_account(self, device_id: str) -> None:
+        async with self._lock(device_id):
+            await self._checked("addRoleACL", rolename=f"dev-{device_id}", acltype="publishClientSend",
+                                topic=protocol.device_topic(device_id, protocol.TELEMETRY), allow=True,
+                                priority=0, allowed=("ACL with this topic already exists",))

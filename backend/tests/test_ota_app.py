@@ -97,7 +97,7 @@ async def test_shutdown_cancels_before_gateway_stop(gateway, monkeypatch):
     async def fake_context():
         yield gateway
         assert cancelled.is_set()
-    monkeypatch.setattr(DeviceGateway, 'from_config', lambda _: fake_context())
+    monkeypatch.setattr(DeviceGateway, 'from_config', lambda *args, **kwargs: fake_context())
     monkeypatch.setattr('app.main.GatewayConfig.from_env', lambda _: None)
     async with lifespan(app):
         status, posted = await http(gateway, 'POST', '/devices/dev/firmware',
