@@ -198,8 +198,6 @@ async def test_tc65_camera_phai_dang_nhap(system, method, path):
 
 
 # ------------------------------------------- lỗ hổng còn lại (chưa sửa trong code)
-@pytest.mark.xfail(reason="Đọc thiết bị/telemetry (GET /devices/...) chỉ cần đăng nhập, chưa kiểm "
-                          "chuồng: Operator chuồng 2 xem được dữ liệu chuồng 1.", strict=False)
 async def test_tc66_khong_xem_duoc_du_lieu_chuong_khong_duoc_gan(system):
     device = await system.online_device("barn-1")
     await device.send_telemetry()

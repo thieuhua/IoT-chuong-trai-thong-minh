@@ -26,6 +26,7 @@ ERR_SENSOR_ERROR = "sensor_error"
 ERR_INTERNAL = "internal"
 ERR_ACTUATOR_NOT_FOUND = "actuator_not_found"
 ERR_OTA = "ota_error"
+ERR_FEED_LIMIT = "feed_limit"
 
 
 class ProtocolError(ValueError):

@@ -2,7 +2,8 @@
 
 cfg: {"driver": "servo", "name": "gate", "pin": 26, "min_us": 500, "max_us": 2400,
       "max_dps": 200, "detach_ms": 400, "start_delay_ms": 8000,
-      "sequence": {"angles": [0, 20, ..., 180], "step_ms": 1000, "autostart": true}}
+      "sequence": {"angles": [0, 20, ..., 180], "step_ms": 1000, "autostart": false}}
+(autostart defaults to false: a feeder servo must not sweep on its own after boot.)
 
 Power-saving options (all off by default) for boards that power the servo from USB:
 - max_dps: move at most this many degrees per second instead of jumping (lower inrush current).
@@ -55,7 +56,7 @@ class Servo:
         self._last_tick = None
         self._reached_at = None
         self.pwm = PWM(Pin(self.pin), freq=50, duty_u16=0)
-        if self.angles and seq.get("autostart", True):
+        if self.angles and seq.get("autostart", False):
             self.start()
             self._next_at = time.ticks_add(time.ticks_ms(), cfg.get("start_delay_ms", 0))
         else:
@@ -70,7 +71,7 @@ class Servo:
     def _target(self, angle, now=None):
         self.angle = angle
         self._reached_at = None
-        if self.max_dps is None or self.position is None:
+        if not self.max_dps or self.position is None:
             # No slewing configured, or unknown start position: go there directly.
             self._drive(angle)
             self._reached_at = time.ticks_ms() if now is None else now

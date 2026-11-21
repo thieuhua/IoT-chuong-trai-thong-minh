@@ -1,9 +1,12 @@
 """Handlers return data only; dispatch sends the response before deferred reboot."""
 import gc
+import time
 from core import protocol as p
 from core import wifi
+from core.runtime import pause
 
 REGISTRY = {}
+FEED_BUDGET_MS = 9500  # backend default command_timeout_s = 10; leave response margin
 
 
 class CommandError(Exception):
@@ -121,11 +124,82 @@ def servo_sequence(ctx, args):
 def relay_set(ctx, args):
     _args(args, ("name", "on", "duration_ms"))
     relay = _actuator(ctx, args, "relay")
+    fan = ctx.fan_control
+    if fan is not None and relay is fan.relay:
+        ctx.control_tick()
+        if fan.fault and args.get("on") is False:
+            raise CommandError(p.ERR_SENSOR_ERROR, "fan is forced on after sensor failures")
     try:
         relay.set(args.get("on"), args.get("duration_ms"))
     except ValueError as exc:
         raise CommandError(p.ERR_BAD_ARGS, str(exc))
+    if fan is not None and relay is fan.relay:
+        fan.manual()
     return relay.state()
+
+
+@register("mode_set")
+def mode_set(ctx, args):
+    _args(args, ("mode",))
+    mode = args.get("mode")
+    if mode not in ("auto", "manual"):
+        raise CommandError(p.ERR_BAD_ARGS, "mode must be auto or manual")
+    if ctx.fan_control is None:
+        raise CommandError(p.ERR_ACTUATOR_NOT_FOUND, "fan controller not configured")
+    ctx.control_tick()
+    ctx.fan_control.set_mode(mode)
+    return ctx.fan_control.status()
+
+
+def _feed_move(ctx, servo, angle, deadline):
+    # Establish a fresh slew clock even on hosts without a running hardware timer.
+    servo.tick(time.ticks_ms())
+    servo.set_angle(angle)
+    while servo.position != angle:
+        if time.ticks_diff(time.ticks_ms(), deadline) >= 0:
+            raise CommandError(p.ERR_INTERNAL, "servo movement timed out")
+        ctx.feed()
+        servo.tick(time.ticks_ms())
+        time.sleep_ms(20)
+
+
+@register("feed")
+def feed(ctx, args):
+    _args(args, ("seconds",))
+    seconds = args.get("seconds")
+    if type(seconds) is not int or not 1 <= seconds <= 10:
+        raise CommandError(p.ERR_BAD_ARGS, "seconds must be an integer in 1..10")
+    servo = ctx.actuator(ctx.config.get("feed_servo", "servo"), "servo")
+    if servo is None:
+        raise CommandError(p.ERR_ACTUATOR_NOT_FOUND, "feed servo not found")
+    angle = ctx.config.get("feed_open_angle", 90)
+    limit = ctx.config.get("feed_limit_per_day", 6)
+    if (type(angle) is not int or not 1 <= angle <= 180
+            or type(limit) is not int or limit < 1
+            or (servo.max_dps is not None and
+                (type(servo.max_dps) not in (int, float)
+                 or not p._finite(servo.max_dps) or servo.max_dps < 0))):
+        raise CommandError(p.ERR_BAD_ARGS, "invalid feed configuration")
+    travel_ms = 0
+    if servo.max_dps:
+        position = servo.position if servo.position is not None else angle
+        travel_ms = (abs(position - angle) + angle) * 1000 / servo.max_dps
+    # Include timer granularity for both moves and cooperative waits. Never shorten
+    # requested dispensing time silently, or begin a command that cannot finish in time.
+    if seconds * 1000 + travel_ms + 200 >= FEED_BUDGET_MS:
+        raise CommandError(p.ERR_BAD_ARGS, "feed duration and servo travel exceed 9.5s budget")
+    deadline = time.ticks_add(time.ticks_ms(), FEED_BUDGET_MS)
+    ctx.feed()
+    if ctx.feed_count >= limit:
+        raise CommandError(p.ERR_FEED_LIMIT, "daily feed limit reached")
+    # Count an attempt before any motion; partial/failed dispensing still consumes a slot.
+    ctx.feed_count += 1
+    try:
+        _feed_move(ctx, servo, angle, deadline)
+        pause(seconds, ctx.feed)
+    finally:
+        _feed_move(ctx, servo, 0, deadline)
+    return {"seconds": seconds, "angle": 0, "feed_count": ctx.feed_count}
 
 
 def _ota_call(fn):
@@ -207,6 +281,12 @@ def dispatch(ctx, payload):
         print("Ignoring command:", exc)
         return
     data = envelope["data"]
+    is_feed = data.get("name") == "feed"
+    if is_feed:
+        for command_id, previous in ctx.feed_responses:
+            if command_id == envelope["id"]:
+                ctx.publish(p.RESP, previous)
+                return
     now = ctx.clock.now()
     ttl = data.get("ttl_s")
     valid_ttl = type(ttl) in (int, float) and p._finite(ttl) and ttl >= 0
@@ -231,6 +311,11 @@ def dispatch(ctx, payload):
         response.update({"ok": False, "error": {"code": exc.code, "message": str(exc)}})
     except Exception as exc:
         response.update({"ok": False, "error": {"code": p.ERR_INTERNAL, "message": str(exc)}})
+    if is_feed:
+        # Cache BEFORE publishing: a dropped response must never dispense twice.
+        ctx.feed_responses.append((envelope["id"], response))
+        if len(ctx.feed_responses) > 8:
+            ctx.feed_responses.pop(0)
     # Only QoS 0 here: a QoS 1 publish inside umqtt's callback waits for PUBACK via wait_msg(),
     # which can re-enter dispatch. Meta (QoS 1) and reboot are handled by the session loop.
     try:

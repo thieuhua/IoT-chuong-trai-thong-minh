@@ -62,7 +62,7 @@ def test_user_mutations_are_audited_but_noop_update_is_not(db):
     logs = db.query(models.AuditLog).all()
     assert len(logs) == 1
     assert (logs[0].user_id, logs[0].action, logs[0].target, logs[0].result) == (
-        "actor", "user.create", created.id, "success"
+        "actor", "user.create", f"users:{created.id}", "success"
     )
     get_users(db)
     assert db.query(models.AuditLog).count() == 1

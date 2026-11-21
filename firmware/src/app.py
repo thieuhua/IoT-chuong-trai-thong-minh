@@ -6,6 +6,7 @@ import commands
 from core import protocol as p
 from core import ota, provisioning, session, wifi
 from core.clock import Clock
+from core.fan_control import FanControl
 from core.identity import Identity
 from core.mqtt_link import MQTTLink, NotAuthorised
 from core.runtime import pause
@@ -28,6 +29,19 @@ class App:
         self.interval_s = self.identity.state.get("interval_s", config.get("interval_s", 10))
         self.sensors = build_sensors(config.get("sensors", []))
         self.actuators = build_actuators(config.get("actuators", []))
+        fan_cfg = config.get("fan_control", {})
+        fan_sensor = next((sensor for sensor in self.sensors
+                           if sensor.name == fan_cfg.get("sensor", "room")), None)
+        fan_relay = self.actuator(fan_cfg.get("relay", "relay"), "relay")
+        if "fan_control" in config and (fan_sensor is None or fan_relay is None):
+            raise ValueError("fan_control sensor or relay not found")
+        self.fan_control = (FanControl(fan_sensor, fan_relay, fan_cfg)
+                            if fan_sensor is not None and fan_relay is not None else None)
+        self._sensor_snapshot = None
+        self.feed_responses = []  # bounded replay cache, RAM only
+        self.feed_count = 0
+        self.feed_day_ms = 0
+        self._feed_clock = self.started_at
         self._timer = None
         if self.actuators:
             # Hardware timer, not the session loop: sequences keep their timing while the
@@ -61,6 +75,18 @@ class App:
     def feed(self):
         if self.watchdog:
             self.watchdog.feed()
+        self.control_tick()
+
+    def control_tick(self):
+        now = time.ticks_ms()
+        elapsed = time.ticks_diff(now, self._feed_clock)
+        self._feed_clock = now
+        self.feed_day_ms += max(0, elapsed)
+        if self.feed_day_ms >= 86400000:
+            self.feed_day_ms %= 86400000
+            self.feed_count = 0
+        if self.fan_control is not None:
+            self.fan_control.tick()
 
     def _tick_actuators(self, _timer):
         now = time.ticks_ms()
@@ -104,6 +130,17 @@ class App:
                         handler=handler)
 
     def publish(self, leaf, data, retain=False, qos=0):
+        fan = self.fan_control
+        if leaf == p.TELEMETRY and fan is not None:
+            # Local producers may publish a fresh sensor sample directly. read_sensors()
+            # already consumed its sample: do not count a transmission as another read.
+            if data is not self._sensor_snapshot:
+                sample = data.get("readings", {}).get(fan.sensor.name)
+                error = data.get("errors", {}).get(fan.sensor.name)
+                if sample is not None or error is not None:
+                    fan.observe(sample, error)
+            self._sensor_snapshot = data
+            data.update(fan.status())
         self.link.publish(p.device_topic(self.identity.device["device_id"], leaf),
                           self.encode(leaf, data), retain=retain, qos=qos)
 
@@ -115,6 +152,13 @@ class App:
         for sensor in self.sensors:
             if name is None or name == sensor.name:
                 self.feed()
+                fan = self.fan_control
+                if fan is not None and sensor is fan.sensor:
+                    if fan.error is not None:
+                        errors[sensor.name] = fan.error
+                    else:
+                        readings[sensor.name] = dict(fan.sample)
+                    continue
                 try:
                     readings[sensor.name] = sensor.read()
                 except SensorError as exc:
@@ -122,6 +166,9 @@ class App:
         result = {"readings": readings}
         if errors:
             result["errors"] = errors
+        if self.fan_control is not None:
+            result.update(self.fan_control.status())
+            self._sensor_snapshot = result
         return result
 
     def run(self):

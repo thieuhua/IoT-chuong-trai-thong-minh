@@ -25,7 +25,7 @@ def test_ping_and_info(ctx):
     assert result["ota"] == "ok"
     assert ctx.meta()["ota"] == "ok"
     assert result["commands"] == ["ping", "get_info", "read", "set_interval",
-                                  "actuator_state", "servo_set", "servo_sequence", "relay_set",
+                                  "actuator_state", "servo_set", "servo_sequence", "relay_set", "mode_set", "feed",
                                   "ota_begin", "ota_chunk",
                                   "ota_commit", "ota_abort", "ota_status", "reboot"]
 

@@ -47,7 +47,9 @@ from .schemas import (
     UserResponse,
     UserUpdateSchema,
 )
-from .services import alert, audit, barn, user, auth, command, scheduler
+from .services import alert, audit, barn, user, auth, scheduler
+from .services import command as command_service
+from .services.alert_engine import AlertEngine
 from iot_core import (BrokerAuthError, CommandFailed, CommandTimeout, DeviceGateway,
                       DeviceNotFound, DeviceOffline, GatewayConfig, InvalidState,
                       RegistrationNotFound, RegistrationStatus)
@@ -55,6 +57,24 @@ from iot_core import (BrokerAuthError, CommandFailed, CommandTimeout, DeviceGate
 from . import models
 
 from . import schemas
+
+
+def register_alert_callbacks(app: FastAPI):
+    """Also supports gateways injected by an ASGI host without lifespan."""
+    gateway = app.state.gateway
+    if getattr(app.state, "alert_gateway", None) is gateway:
+        return
+    for unsubscribe in getattr(app.state, "alert_unsubscribes", ()):
+        unsubscribe()
+    engine = AlertEngine(SessionLocal)
+    app.state.alert_engine = engine
+    app.state.alert_unsubscribes = [gateway.on_telemetry(engine.on_telemetry),
+                                   gateway.on_status_change(engine.on_status_change)]
+    app.state.alert_gateway = gateway
+
+
+async def ensure_gateway_callbacks(request: Request):
+    register_alert_callbacks(request.app)
 
 
 def public(value: Any) -> Any:
@@ -80,6 +100,7 @@ async def lifespan(app: FastAPI):
                if DATABASE_URL else {})
     async with DeviceGateway.from_config(GatewayConfig.from_env(env_file), **storage) as gateway:
         app.state.gateway = gateway
+        register_alert_callbacks(app)
         app.state.firmware_jobs = {}
         app.state.firmware_tasks = set()
         app.state.ota_listeners = set()
@@ -90,6 +111,9 @@ async def lifespan(app: FastAPI):
         try:
             yield
         finally:
+            for unsubscribe in app.state.alert_unsubscribes:
+                unsubscribe()
+            app.state.alert_gateway = None
             # Stop scheduler
             if scheduler_task is not None:
                 scheduler_task.cancel()
@@ -220,7 +244,8 @@ def _authenticate(db: Session, raw_token: Optional[str]):
 
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _gateway_callbacks=Depends(ensure_gateway_callbacks),
 ):
     """Token chỉ nhận qua header Authorization: Bearer."""
     return _authenticate(db, credentials.credentials if credentials else None)
@@ -314,6 +339,18 @@ def check_device_write_access(
 
     return device
 
+
+def check_device_read_access(device_id: str, db: Session, current_user: models.User):
+    device = db.query(models.Device).filter(models.Device.device_id == device_id).first()
+    if device is None:
+        raise HTTPException(404, "Device not found")
+    if current_user.role != "Admin":
+        if not device.barn_id:
+            raise HTTPException(403, "Permission denied")
+        check_barn_access(device.barn_id, current_user, db)
+    return device
+
+
 @app.post("/devices/{device_id}/firmware", status_code=202)
 async def firmware(
     request: Request,
@@ -371,18 +408,31 @@ async def health(
 async def devices(
     request: Request,
     online: bool | None = None,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    return public(await request.app.state.gateway.list_devices(online))
+    query = db.query(models.Device)
+    if current_user.role != "Admin":
+        query = query.join(models.BarnAssignment,
+                           models.Device.barn_id == models.BarnAssignment.barn_id).filter(
+            models.BarnAssignment.user_id == current_user.id,
+            models.BarnAssignment.access_level == current_user.role,
+        )
+    barns = {row.device_id: row.barn_id for row in query.all()}
+    rows = public(await request.app.state.gateway.list_devices(online))
+    return [{**row, "barn_id": barns.get(row["device_id"])} for row in rows
+            if current_user.role == "Admin" or row["device_id"] in barns]
 
 
 @app.get("/devices/{device_id}")
 async def device(
     request: Request,
     device_id: str,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    return public(await request.app.state.gateway.get_device(device_id))
+    row = check_device_read_access(device_id, db, current_user)
+    return {**public(await request.app.state.gateway.get_device(device_id)), "barn_id": row.barn_id}
 
 
 @app.patch("/devices/{device_id}")
@@ -435,8 +485,10 @@ async def revoke(
 async def readings(
     request: Request,
     device_id: str,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    check_device_read_access(device_id, db, current_user)
     return public(await request.app.state.gateway.read_all(device_id))
 
 
@@ -445,8 +497,10 @@ async def sensor(
     request: Request,
     device_id: str,
     sensor: str,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    check_device_read_access(device_id, db, current_user)
     return await request.app.state.gateway.read_sensor(device_id, sensor)
 
 
@@ -459,7 +513,11 @@ async def command(
     current_user: models.User = Depends(get_current_user)
 ):
     check_device_write_access(device_id, db, current_user)
-    return await request.app.state.gateway.send_command(device_id, body.name, body.args, body.timeout_s)
+    _, result = await command_service.execute_command(
+        db, request.app.state.gateway, device_id, current_user.id,
+        body.name, body.args, body.timeout_s,
+    )
+    return result
 
 
 @app.post("/devices/{device_id}/ping")
@@ -509,8 +567,10 @@ async def telemetry(
     device_id: str,
     limit: int = Query(100, ge=1),
     since: datetime | None = None,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    check_device_read_access(device_id, db, current_user)
     return public(await request.app.state.gateway.telemetry_history(device_id, limit, since))
 
 
@@ -518,8 +578,10 @@ async def telemetry(
 async def latest(
     request: Request,
     device_id: str,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    check_device_read_access(device_id, db, current_user)
     return public(await request.app.state.gateway.latest_telemetry(device_id))
 
 
@@ -831,6 +893,46 @@ def get_barn_devices(
 ):
     check_barn_access(barn_id, current_user, db)
     return barn.get_barn_devices(db, barn_id)
+
+
+@app.get("/barns/{barn_id}/commands", response_model=list[schemas.CommandResponse])
+def get_barn_commands(
+    barn_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    check_barn_access(barn_id, current_user, db)
+    return command_service.get_commands(db, barn_id)
+
+
+@app.post("/barns/{barn_id}/commands", response_model=schemas.CommandResponse)
+async def send_barn_command(
+    request: Request,
+    barn_id: str,
+    body: schemas.CommandCreateSchema,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin", "Operator")),
+):
+    check_barn_access(barn_id, current_user, db)
+    return await command_service.send_command(
+        db, request.app.state.gateway, barn_id, current_user.id, body,
+    )
+
+
+@app.post("/barns/{barn_id}/alert-rules", response_model=schemas.AlertRuleResponse, status_code=201)
+def create_alert_rule(
+    barn_id: str,
+    body: schemas.AlertRuleCreateSchema,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin")),
+):
+    check_barn_access(barn_id, current_user, db)
+    row = models.AlertRule(id=str(uuid4()), barn_id=barn_id, **body.model_dump())
+    db.add(row)
+    audit.record_change(db, current_user.id, "alert_rule.create", f"alert_rules:{row.id}")
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 @app.get("/barns/{barn_id}/assignments", response_model=list[schemas.BarnAssignmentResponse])

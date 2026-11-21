@@ -26,6 +26,9 @@ class FakeDB:
     def first(self):
         return SimpleNamespace(barn_id=None, name='', interval_s=None)
 
+    def all(self):
+        return []
+
     def add(self, entity):
         pass
 

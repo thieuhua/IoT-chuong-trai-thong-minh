@@ -29,6 +29,7 @@ class Relay:
         max_on = cfg.get("max_on_ms", 0)
         self.max_on_ms = _duration_ms(max_on) if max_on else 0
         self.on = False
+        self._forced_on = False
         self._off_at = None
         # Set the idle level before switching the pin to output, so the relay never blips on.
         self.output = Pin(self.pin, Pin.OUT, value=1 if self.active_low else 0)
@@ -42,11 +43,22 @@ class Relay:
             if not on:
                 raise ValueError("duration_ms only applies when switching on")
             duration_ms = _duration_ms(duration_ms)
-        if on and self.max_on_ms and (duration_ms is None or duration_ms > self.max_on_ms):
+        if self._forced_on:
+            if not on:
+                raise ValueError("fan sensor fault: relay is forced on")
+            duration_ms = None
+        if (not self._forced_on and on and self.max_on_ms
+                and (duration_ms is None or duration_ms > self.max_on_ms)):
             duration_ms = self.max_on_ms
         self._off_at = time.ticks_add(time.ticks_ms(), duration_ms) if on and duration_ms else None
         self.on = on
         self.output.value(1 if on != self.active_low else 0)
+
+    def force_on(self, enabled):
+        """Safety interlock takes precedence over both manual and timed switch-off."""
+        self._forced_on = enabled
+        if enabled and (not self.on or self._off_at is not None):
+            self.set(True)
 
     def tick(self, now):
         """Called every few ms from a hardware timer: handles the automatic switch-off."""

@@ -24,6 +24,17 @@
   "provision_retry_s": 10,
   "ntp": true,
   "watchdog_s": 0,
+  "fan_control": {
+    "sensor": "room",
+    "relay": "relay",
+    "on_c": 32,
+    "off_c": 30,
+    "fault_reads": 3,
+    "manual_ttl_min": 30
+  },
+  "feed_servo": "servo",
+  "feed_open_angle": 90,
+  "feed_limit_per_day": 6,
   "sensors": [
     {
       "driver": "dht11",
@@ -56,7 +67,7 @@
           180
         ],
         "step_ms": 1000,
-        "autostart": true
+        "autostart": false
       },
       "max_dps": 360,
       "detach_ms": 300,

@@ -122,11 +122,31 @@ Quy tắc:
 ```json
 {
   "readings": {"room": {"temperature": 24, "humidity": 61}},
-  "errors": {"soil": "timeout"}
+  "errors": {"soil": "timeout"},
+  "mode": "AUTO",
+  "fan_on": false,
+  "sensor_ok": true
 }
 ```
 
 `readings` gom theo tên cảm biến, mỗi cảm biến trả về các trường (`fields`) đã khai báo trong `meta`. `errors` chỉ có khi có cảm biến đọc lỗi. Chu kỳ gửi là `interval_s`.
+
+Khi có bộ điều khiển quạt, telemetry và kết quả `read` thêm `mode` (`AUTO`/`MANUAL`),
+`fan_on` (bool, trạng thái GPIO quạt), `sensor_ok` (bool, lần đọc cảm biến quạt gần nhất hợp lệ).
+Đây là trạng thái điều khiển trên ESP32, không phải phản hồi tốc độ quạt thật.
+
+`fan_control` trong cấu hình chọn `sensor` (mặc định `room`), `relay` (mặc định `relay`),
+`on_c` (32), `off_c` (30), `fault_reads` (3), `manual_ttl_min` (30).
+Nếu không khai báo khối này nhưng có cả `room` và `relay`, dùng các mặc định trên.
+AUTO bật khi nhiệt độ ≥ `on_c`, tắt khi ≤ `off_c`, giữ nguyên trong khoảng giữa.
+Vòng điều khiển đọc cảm biến cách nhau ít nhất 2 giây (hoặc khoảng tối thiểu của driver),
+chạy trong session và lúc chờ kết nối lại/cho ăn qua `App.feed()`, không đọc DHT từ ngắt timer.
+Telemetry dùng lại mẫu quạt đã đọc, không làm tăng số lỗi bằng mẫu đọc trùng.
+Mẫu mới do thành phần nội bộ gửi qua `App.publish(TELEMETRY, data)` cũng được chuyển cho
+bộ điều khiển trước khi gửi MQTT và bổ sung ba trường trạng thái; publish lại snapshot gần
+nhất từ `read_sensors()` không được tính thành một lần đọc mới.
+Sau 3 lỗi liên tiếp, bật quạt bất kể chế độ và hủy hẹn tắt; lệnh tắt trả `sensor_error`.
+Một mẫu hợp lệ xóa lỗi liên tiếp và gỡ khóa; chế độ AUTO/MANUAL hiện tại tiếp tục áp dụng.
 
 ## 7. Lệnh và phản hồi
 
@@ -158,11 +178,37 @@ khởi động nằm trong `config.json` (`sequence.autostart`). Thay đổi b�
 | Lệnh | `args` | `result` |
 | --- | --- | --- |
 | `relay_set` | `{"name": "relay", "on": true, "duration_ms": 5000}` (`duration_ms` tùy chọn, 100–86400000, chỉ khi bật; `name` bỏ được khi chỉ có 1 relay) | trạng thái relay |
+| `mode_set` | `{"mode": "auto"}` hoặc `{"mode": "manual"}` | `{"mode": "AUTO", "fan_on": true, "sensor_ok": true}` |
+| `feed` | `{"seconds": 1}` (số nguyên 1–10) | `{"seconds": 1, "angle": 0, "feed_count": 1}`; phản hồi sau khi đã điều khiển về góc đóng |
 
 Trạng thái relay: `{"on": true, "off_in_ms": 4200}` (`off_in_ms` chỉ có khi đang hẹn tự tắt).
 Cấu hình: `{"driver": "relay", "name": "relay", "pin": 25, "active_low": false, "initial": false, "max_on_ms": 0}`.
 `active_low: true` cho module relay kích mức thấp. Khi khởi động relay luôn về `initial` (mặc định tắt);
 `max_on_ms` > 0 giới hạn thời gian bật tối đa. Gửi lệnh `servo_*` tới relay (hoặc ngược lại) trả `actuator_not_found`.
+
+`relay_set` hợp lệ lên relay quạt chuyển sang MANUAL và gia hạn `manual_ttl_min`;
+lệnh lên relay khác không đổi chế độ quạt. MANUAL tự về AUTO khi hết hạn tính bằng uptime.
+`mode_set` chỉ nhận chữ thường trong args, trạng thái trả về chữ hoa; đổi chế độ không gỡ khóa
+fail-safe. Khi khóa fail-safe, `duration_ms` và `max_on_ms` không được tắt quạt.
+
+`feed_servo` chọn tên servo (mặc định `servo`), `feed_open_angle` là góc mở (mặc định 90°, 1–180),
+`feed_limit_per_day` là số lượt tối đa mỗi ngày (mặc định 6, số nguyên dương).
+Feed dừng chuỗi servo, mở tới góc cấu hình, chờ `seconds`, đóng về 0°, rồi mới trả `resp`.
+Backend mặc định chờ 10 giây. Firmware dành tối đa 9,5 giây cho cả mở/chờ/đóng:
+nếu `seconds` cộng thời gian di chuyển theo `max_dps` và biên 200 ms không vừa ngân sách,
+trả `bad_args` trước khi mở và không tính lượt. Vì vậy `seconds=10` luôn bị từ chối;
+`seconds=9` phụ thuộc cấu hình/vị trí servo. Cấu hình mẫu nên dùng 1–8 giây.
+Không cắt ngắn thời gian chờ mà người gọi yêu cầu; servo không tiến triển trước hạn trả `internal`.
+Trong lúc di chuyển/chờ vẫn gọi `ctx.feed()` để phục vụ watchdog và điều khiển quạt.
+Không có cảm biến vị trí trên SG90: hoàn thành nghĩa là đã phát điều khiển tới vị trí đóng,
+không xác nhận được cơ cấu bị kẹt.
+
+Thiết bị lưu tối đa 8 ID `feed` gần nhất cùng phản hồi trong RAM; nhận lại cùng ID sẽ trả lại
+kết quả cũ, kể cả sau khi lần publish phản hồi trước bị lỗi, không mở servo hay trừ lượt lần nữa.
+Mỗi lượt được tính trước khi mở: lỗi giữa chừng vẫn chiếm một lượt và luôn cố đóng trong `finally`.
+Đủ giới hạn trả `feed_limit`; args/cấu hình không hợp lệ trả `bad_args`.
+Ngày tính theo từng khoảng 86400 giây từ lúc boot, không phụ thuộc NTP. Lượt và bộ nhớ ID
+không lưu flash, sẽ mất khi reboot; ID đã rời bộ nhớ có thể được thực thi lại.
 
 ### Nạp code qua Wi-Fi (OTA)
 
@@ -185,7 +231,7 @@ Cấu hình: `{"driver": "relay", "name": "relay", "pin": 25, "active_low": fals
 - Không nhận `ota_begin` mới khi bản trước còn ở `trial`/`committing`.
 - `meta.fw` là phiên bản OTA đang chạy; `meta.ota` là trạng thái (`ok`/`trial`).
 
-Mã lỗi: `unknown_command`, `bad_args`, `sensor_not_found`, `sensor_error`, `actuator_not_found`, `ota_error`, `internal`.
+Mã lỗi: `unknown_command`, `bad_args`, `sensor_not_found`, `sensor_error`, `actuator_not_found`, `feed_limit`, `ota_error`, `internal`.
 Thêm lệnh mới: khai báo ở bảng này, đăng ký handler trong `firmware/src/commands.py`, thêm hàm tiện ích trong `DeviceGateway` nếu cần.
 
 ## 8. Quyền trên broker (Mosquitto Dynamic Security)

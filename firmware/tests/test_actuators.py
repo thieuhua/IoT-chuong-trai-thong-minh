@@ -18,6 +18,7 @@ def config(name="gate", **extra):
 
 
 def sequence(**extra):
+    extra.setdefault("autostart", True)
     return dict(angles=ANGLES[:], step_ms=1000, **extra)
 
 
@@ -82,7 +83,7 @@ def test_sequence_timing_and_ten_second_cycle(board_environment):
 @pytest.mark.parametrize("start,target", [(0, 20), (20, 0)])
 def test_slew_limit_reaches_twenty_degree_target_in_three_ticks(
         start, target, board_environment):
-    servo = Servo(config(max_dps=360, sequence=dict(angles=[start])))
+    servo = Servo(config(max_dps=360, sequence=dict(angles=[start], autostart=True)))
     assert servo.position is None and not servo.attached
     assert servo.pwm.duty_values == [0]
     tick_at(servo, board_environment, 0)
@@ -110,7 +111,7 @@ def test_slew_limit_reaches_twenty_degree_target_in_three_ticks(
 
 
 def test_slew_return_from_180_to_zero_within_one_second(board_environment):
-    servo = Servo(config(max_dps=360, sequence=dict(angles=[180, 0], step_ms=1000)))
+    servo = Servo(config(max_dps=360, sequence=dict(angles=[180, 0], step_ms=1000, autostart=True)))
     tick_at(servo, board_environment, 0)
     assert servo.position == 180
     reached_at = None
@@ -293,7 +294,7 @@ def test_invalid_angle_lists(angles):
 @pytest.mark.parametrize("step_ms", [99, 60001, -1, 0, True, 100.5, "100", None])
 def test_invalid_step_ms(step_ms):
     with pytest.raises(ValueError):
-        Servo(config(sequence=dict(angles=[0], step_ms=step_ms)))
+        Servo(config(sequence=dict(angles=[0], step_ms=step_ms, autostart=True)))
     if step_ms is not None:  # None means retain the configured interval in start().
         with pytest.raises(ValueError):
             Servo(config()).start(angles=[0], step_ms=step_ms)
@@ -301,7 +302,7 @@ def test_invalid_step_ms(step_ms):
 
 @pytest.mark.parametrize("step_ms", [100, 60000])
 def test_step_ms_bounds(step_ms):
-    servo = Servo(config(sequence=dict(angles=[0], step_ms=step_ms)))
+    servo = Servo(config(sequence=dict(angles=[0], step_ms=step_ms, autostart=True)))
     assert servo.running and servo.step_ms == step_ms
 
 

@@ -5,7 +5,6 @@ import {
   apiGetDeviceLatestTelemetry,
   apiGetDeviceTelemetry,
   apiGetBarnCommands,
-  apiSendBarnCommand,
   apiSendDeviceCommand,
   subscribeToEvents,
 } from '../../services/api';
@@ -184,9 +183,6 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
       if (selectedDeviceId) {
         await apiSendDeviceCommand(selectedDeviceId, 'relay_set', payload);
       }
-      if (selectedBarnId) {
-        await apiSendBarnCommand(selectedBarnId, 'relay_set', payload).catch(() => {});
-      }
 
       onNotify(`Đã gửi lệnh ${isOn ? 'bật' : 'tắt'} quạt`);
       if (selectedBarnId) {
@@ -287,7 +283,7 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
                         <td><code>{cmd.params ? JSON.stringify(cmd.params) : '--'}</code></td>
                         <td><code>{cmd.device_id || '--'}</code></td>
                         <td>
-                          <span className={cmd.status === 'executed' ? 'text-green' : cmd.status === 'pending' ? 'text-amber' : ''}>
+                          <span className={cmd.status === 'success' ? 'text-green' : cmd.status === 'pending' ? 'text-amber' : ''}>
                             {cmd.status}
                           </span>
                         </td>

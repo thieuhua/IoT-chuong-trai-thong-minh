@@ -32,7 +32,8 @@ async def test_tc20_vong_doi_day_du(system):
 
     # 3. Đăng nhập bằng tài khoản riêng, báo online, gửi meta (cảm biến, actuator, lệnh)
     await device.go_online()
-    info = (await system.call("viewer", "GET", f"/devices/{device.device_id}")).json()
+    # Chưa gán chuồng: chỉ Admin xem được (Operator/Viewer chỉ thấy thiết bị của chuồng được gán).
+    info = (await system.call("admin", "GET", f"/devices/{device.device_id}")).json()
     assert info["online"] is True
     assert info["model"] == "esp32" and "relay_set" in info["commands"]
     assert [s["name"] for s in info["sensors"]] == ["room"]

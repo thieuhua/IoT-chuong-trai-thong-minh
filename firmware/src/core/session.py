@@ -50,6 +50,7 @@ def run(ctx):
         trial = ota.in_trial()
         while True:
             ctx.feed()
+            ctx.control_tick()
             if not wifi.connected():
                 raise OSError("Wi-Fi disconnected")
             link.poll()
