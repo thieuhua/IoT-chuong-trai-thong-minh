@@ -2,16 +2,19 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { apiSendDeviceCommand, getStoredToken } from '../../services/api';
 import { RoleBadge } from '../common/StatusBadge';
+import { LifecycleBadge, LifecycleActions, useDeviceLifecycle } from '../devices/DeviceLifecycle';
 
 export default function MobileAppView({
   devices,
   alerts,
   onNotify,
+  onRefreshDevices,
 }) {
   const { user, logout, canControl } = useAuth();
   const [mobileTab, setMobileTab] = useState('camera');
   const [servoAngle, setServoAngle] = useState(90);
   const [isFeeding, setIsFeeding] = useState(false);
+  const { busyDeviceId, changeLifecycle } = useDeviceLifecycle(onRefreshDevices, onNotify);
 
   const token = getStoredToken();
   const feedSrc = token ? `/camera/feed?token=${encodeURIComponent(token)}` : '/camera/feed';
@@ -126,6 +129,8 @@ export default function MobileAppView({
                     <div className="device-card-body">
                       <div>Mã: <code>{d.device_id}</code></div>
                       <div>Firmware: {d.fw || 'v1.0.0'}</div>
+                      <div>Vòng đời: <LifecycleBadge device={d} /></div>
+                      <LifecycleActions device={d} onAction={changeLifecycle} busy={busyDeviceId !== null} />
                     </div>
                   </div>
                 ))

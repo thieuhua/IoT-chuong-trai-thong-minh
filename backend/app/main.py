@@ -50,6 +50,7 @@ from .schemas import (
 from .services import alert, audit, barn, user, auth, scheduler
 from .services import command as command_service
 from .services.alert_engine import AlertEngine
+from .services.lifecycle_events import LifecycleEventRecorder
 from iot_core import (BrokerAuthError, CommandFailed, CommandTimeout, DeviceGateway,
                       DeviceNotFound, DeviceOffline, GatewayConfig, InvalidState,
                       RegistrationNotFound, RegistrationStatus)
@@ -73,8 +74,21 @@ def register_alert_callbacks(app: FastAPI):
     app.state.alert_gateway = gateway
 
 
+def register_lifecycle_callbacks(app: FastAPI):
+    gateway = app.state.gateway
+    if getattr(app.state, "lifecycle_gateway", None) is gateway:
+        return
+    for unsubscribe in getattr(app.state, "lifecycle_unsubscribes", ()):
+        unsubscribe()
+    recorder = LifecycleEventRecorder(SessionLocal)
+    app.state.lifecycle_recorder = recorder
+    app.state.lifecycle_unsubscribes = [gateway.on_lifecycle_change(recorder.on_lifecycle_change)]
+    app.state.lifecycle_gateway = gateway
+
+
 async def ensure_gateway_callbacks(request: Request):
     register_alert_callbacks(request.app)
+    register_lifecycle_callbacks(request.app)
 
 
 def public(value: Any) -> Any:
@@ -101,6 +115,7 @@ async def lifespan(app: FastAPI):
     async with DeviceGateway.from_config(GatewayConfig.from_env(env_file), **storage) as gateway:
         app.state.gateway = gateway
         register_alert_callbacks(app)
+        register_lifecycle_callbacks(app)
         app.state.firmware_jobs = {}
         app.state.firmware_tasks = set()
         app.state.ota_listeners = set()
@@ -114,6 +129,9 @@ async def lifespan(app: FastAPI):
             for unsubscribe in app.state.alert_unsubscribes:
                 unsubscribe()
             app.state.alert_gateway = None
+            for unsubscribe in app.state.lifecycle_unsubscribes:
+                unsubscribe()
+            app.state.lifecycle_gateway = None
             # Stop scheduler
             if scheduler_task is not None:
                 scheduler_task.cancel()
@@ -179,6 +197,14 @@ for error in (DeviceNotFound, RegistrationNotFound, DeviceOffline, InvalidState,
 class RenameBody(BaseModel):
     name: str | None = None
     barn_id: str | None = None
+
+
+class LifecycleReasonBody(BaseModel):
+    reason: str | None = None
+
+
+class MaintenanceBody(LifecycleReasonBody):
+    on: bool = Field(strict=True)
 
 
 class CommandBody(BaseModel):
@@ -481,6 +507,76 @@ async def revoke(
     return {"ok": True}
 
 
+@app.post("/devices/{device_id}/maintenance")
+async def maintenance(
+    request: Request,
+    device_id: str,
+    body: MaintenanceBody,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin")),
+):
+    gateway = request.app.state.gateway
+    result = (await gateway.set_maintenance(device_id, body.reason or "") if body.on
+              else await gateway.resume(device_id))
+    action = "device.maintenance" if body.on else "device.resume"
+    audit.record_change(db, current_user.id, action, f"devices:{device_id}")
+    db.commit()
+    return public(result)
+
+
+@app.post("/devices/{device_id}/suspend")
+async def suspend(
+    request: Request,
+    device_id: str,
+    body: LifecycleReasonBody | None = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin")),
+):
+    result = await request.app.state.gateway.suspend(device_id, (body.reason or "") if body else "")
+    audit.record_change(db, current_user.id, "device.suspend", f"devices:{device_id}")
+    db.commit()
+    return public(result)
+
+
+@app.post("/devices/{device_id}/resume")
+async def resume(
+    request: Request,
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin")),
+):
+    result = await request.app.state.gateway.resume(device_id)
+    audit.record_change(db, current_user.id, "device.resume", f"devices:{device_id}")
+    db.commit()
+    return public(result)
+
+
+@app.post("/devices/{device_id}/decommission")
+async def decommission(
+    request: Request,
+    device_id: str,
+    body: LifecycleReasonBody | None = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin")),
+):
+    result = await request.app.state.gateway.decommission(device_id, (body.reason or "") if body else "")
+    audit.record_change(db, current_user.id, "device.decommission", f"devices:{device_id}")
+    db.commit()
+    return public(result)
+
+
+@app.get("/devices/{device_id}/events", response_model=list[schemas.DeviceEventResponse])
+async def device_events(
+    device_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    check_device_read_access(device_id, db, current_user)
+    return (db.query(models.DeviceEvent).filter(models.DeviceEvent.device_id == device_id)
+            .order_by(models.DeviceEvent.ts.desc(), models.DeviceEvent.id.desc()).limit(limit).all())
+
+
 @app.get("/devices/{device_id}/readings")
 async def readings(
     request: Request,
@@ -588,7 +684,8 @@ async def latest(
 @app.get("/registrations")
 async def registrations(
     request: Request,
-    status: Literal["pending", "approved", "rejected", "revoked", "all"] = "pending",
+    status: Literal["pending", "approved", "rejected", "revoked", "maintenance",
+                    "suspended", "decommissioned", "all"] = "pending",
     current_user: models.User = Depends(get_current_user)
 ):
     state = None if status == "all" else RegistrationStatus(status)
@@ -635,6 +732,19 @@ async def reject(
     )
     db.commit()
     return result
+
+
+@app.post("/registrations/{hw_id}/recommission")
+async def recommission(
+    request: Request,
+    hw_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin")),
+):
+    result = await request.app.state.gateway.recommission(hw_id)
+    audit.record_change(db, current_user.id, "registration.recommission", f"registrations:{hw_id}")
+    db.commit()
+    return public(result)
 
 
 @app.get("/events")

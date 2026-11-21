@@ -163,6 +163,7 @@ export default function App() {
           devices={devices}
           alerts={alerts}
           onNotify={showNotification}
+          onRefreshDevices={syncSystemData}
         />
       )}
     </div>

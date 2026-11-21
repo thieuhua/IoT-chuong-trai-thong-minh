@@ -285,7 +285,7 @@ class DeviceConfig(Base):
 class DeviceEvent(Base):
     __tablename__ = "device_events"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
 
     device_id = Column(
         String(100),

@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app import models
 from iot_core import protocol as p
+from support.broker import NotAuthorised
 
 
 async def test_tc20_vong_doi_day_du(system):
@@ -158,3 +161,60 @@ async def test_tc27_doc_cam_bien_theo_yeu_cau(system):
     r = await system.call("viewer", "GET", f"/devices/{device.device_id}/sensors/khong-co")
     assert r.status_code == 502 and r.json()["code"] == "sensor_not_found"
     assert json.loads(device.sent[-1][1])["data"]["ok"] is False
+
+
+async def test_lifecycle_suspend_resume_and_decommission(system):
+    """Admin lifecycle API drives real gateway, DynSec ACLs and firmware traffic."""
+    device = await system.online_device()
+    base = f"/devices/{device.device_id}"
+    telemetry_topic = device.topic(p.TELEMETRY)
+    await device.send_telemetry({"room": {"temperature": 25}})
+
+    response = await system.call("admin", "POST", f"{base}/suspend", json={"reason": "Kiểm tra"})
+    assert response.status_code == 200 and response.json()["lifecycle"] == "suspended"
+    assert device.session.connected and device.device_id in system.broker.accounts
+    assert system.broker.can_subscribe(device.session.account, device.topic(p.CMD))
+    await device.send_telemetry({"room": {"temperature": 99}})
+    assert (device.device_id, "publish", telemetry_topic) in system.broker.denied
+    # Also bypass the device ACL to prove the gateway drops in-flight telemetry.
+    await system.gateway.transport.publish(telemetry_topic,
+        p.Envelope(p.TELEMETRY, {"readings": {"room": {"temperature": 98}}}).encode())
+    await system.broker.settle()
+    latest = await system.call("viewer", "GET", f"{base}/telemetry/latest")
+    assert latest.json()["readings"]["values"]["room"]["temperature"] == 25
+    assert (await system.call("operator", "POST", f"{base}/commands", json={"name": "ping"})).status_code == 409
+
+    response = await system.call("admin", "POST", f"{base}/resume")
+    assert response.status_code == 200 and response.json()["lifecycle"] == "active"
+    await device.send_telemetry({"room": {"temperature": 26}})
+    latest = await system.call("viewer", "GET", f"{base}/telemetry/latest")
+    assert latest.json()["readings"]["values"]["room"]["temperature"] == 26
+    assert (await system.call("operator", "POST", f"{base}/commands", json={"name": "ping"})).status_code == 200
+
+    response = await system.call("admin", "POST", f"{base}/decommission", json={"reason": "Ngừng dùng"})
+    assert response.status_code == 200 and response.json()["lifecycle"] == "decommissioned"
+    assert device.device_id not in system.broker.accounts and not device.session.connected
+    with pytest.raises(NotAuthorised):
+        await device.go_online()
+    assert (await system.call("admin", "POST", f"{base}/resume")).status_code == 409
+    await device.request_provisioning()
+    assert device.provision_replies[-1] == {"status": "rejected", "reason": "Ngừng dùng"}
+    await system.gateway.transport.publish(telemetry_topic,
+        p.Envelope(p.TELEMETRY, {"readings": {"room": {"temperature": 100}}}).encode())
+    await system.broker.settle()
+    with system.db() as db:
+        assert db.query(models.Telemetry).filter_by(device_id=device.device_id).count() == 2
+        assert db.get(models.Device, device.device_id).barn_id == "barn-1"
+    response = await system.call("viewer", "GET", f"{base}/events")
+    assert response.status_code == 200
+    assert [row["detail"]["state"] for row in response.json()] == ["decommissioned", "active", "suspended"]
+    commands = [command["command"] for command in system.broker.control_commands]
+    assert "removeRoleACL" in commands and "deleteClient" in commands
+
+    response = await system.call("admin", "POST", f"/registrations/{device.hw_id}/recommission")
+    assert response.status_code == 200 and response.json()["status"] == "revoked"
+    await device.request_provisioning()
+    assert device.provision_replies[-1]["status"] == "pending"
+    await system.approve_via_api(device.hw_id)
+    await device.go_online()
+    assert (await system.call("viewer", "GET", base)).json()["lifecycle"] == "active"

@@ -10,6 +10,7 @@ import {
 } from '../../services/api';
 import DeviceList from './DeviceList';
 import PendingRegistrations from './PendingRegistrations';
+import { useDeviceLifecycle } from './DeviceLifecycle';
 
 export default function DeviceManager({
   barns = [],
@@ -21,6 +22,10 @@ export default function DeviceManager({
 }) {
   const { canManage, canControl } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState('devices');
+  const { busyDeviceId, changeLifecycle } = useDeviceLifecycle(async () => {
+    await onRefreshDevices();
+    await onRefreshRegistrations();
+  }, onNotify);
 
   const handlePing = async (deviceId) => {
     try {
@@ -131,6 +136,8 @@ export default function DeviceManager({
           onReboot={handleReboot}
           onAssignBarn={handleAssignBarn}
           onRevoke={handleRevoke}
+          onLifecycleAction={changeLifecycle}
+          busyDeviceId={busyDeviceId}
         />
       ) : (
         <PendingRegistrations

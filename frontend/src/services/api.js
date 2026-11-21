@@ -287,6 +287,35 @@ export async function apiRevokeDevice(deviceId) {
   });
 }
 
+export async function apiSetDeviceMaintenance(deviceId, on, reason = '') {
+  return request(`/devices/${encodeURIComponent(deviceId)}/maintenance`, {
+    method: 'POST',
+    body: JSON.stringify({ on, reason }),
+  });
+}
+
+export async function apiSuspendDevice(deviceId, reason = '') {
+  return request(`/devices/${encodeURIComponent(deviceId)}/suspend`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function apiResumeDevice(deviceId) {
+  return request(`/devices/${encodeURIComponent(deviceId)}/resume`, { method: 'POST' });
+}
+
+export async function apiDecommissionDevice(deviceId, reason = '') {
+  return request(`/devices/${encodeURIComponent(deviceId)}/decommission`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function apiGetDeviceEvents(deviceId, limit = 100) {
+  return request(`/devices/${encodeURIComponent(deviceId)}/events?limit=${limit}`);
+}
+
 // ==========================================
 // 5. REGISTRATIONS (PROVISIONING)
 // ==========================================
@@ -311,6 +340,10 @@ export async function apiRejectRegistration(hwId, reason = '') {
     method: 'POST',
     body: JSON.stringify({ reason }),
   });
+}
+
+export async function apiRecommissionRegistration(hwId) {
+  return request(`/registrations/${encodeURIComponent(hwId)}/recommission`, { method: 'POST' });
 }
 
 // ==========================================

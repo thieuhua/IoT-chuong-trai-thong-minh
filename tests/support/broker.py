@@ -229,6 +229,15 @@ class InMemoryBroker:
             if any(a["acltype"] == c["acltype"] and a["topic"] == c["topic"] for a in acls):
                 return "ACL with this topic already exists"
             acls.append(dict(acltype=c["acltype"], topic=c["topic"], allow=c.get("allow", False)))
+        elif name == "removeRoleACL":
+            acls = self.roles.get(c["rolename"])
+            if acls is None:
+                return "Role not found"
+            acl = next((a for a in acls if a["acltype"] == c["acltype"]
+                        and a["topic"] == c["topic"]), None)
+            if acl is None:
+                return "ACL not found"
+            acls.remove(acl)
         elif name == "createClient":
             if c["username"] in self.accounts:
                 return "Client already exists"
