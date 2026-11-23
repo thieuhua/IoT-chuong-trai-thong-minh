@@ -180,7 +180,10 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
 
     try {
       const isOn = Boolean(on);
-      const payload = { on: isOn };
+      // The fan is the relay named "relay" (GPIO26); boards with several relays need the name.
+      const relays = (currentDev?.actuators || []).filter((act) => act.driver === 'relay');
+      const fan = relays.find((act) => act.name === 'relay') || relays[0];
+      const payload = { name: fan?.name || 'relay', on: isOn };
 
       if (selectedDeviceId) {
         await apiSendDeviceCommand(selectedDeviceId, 'relay_set', payload);

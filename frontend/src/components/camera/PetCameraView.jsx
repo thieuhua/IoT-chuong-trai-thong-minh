@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useAuth } from '../../context/AuthContext';
 import {
   apiGetCameraStatus,
   apiStartCamera,
   apiStopCamera,
-  apiSendDeviceCommand,
 } from '../../services/api';
 import LiveVideoPlayer from './LiveVideoPlayer';
-import ServoController from './ServoController';
 import PetActivityLog from './PetActivityLog';
 
-export default function PetCameraView({ devices, onNotify }) {
-  const { canControl } = useAuth();
+export default function PetCameraView({ onNotify }) {
   const [cameraStatus, setCameraStatus] = useState({
     is_running: false,
     state: 'absent',
@@ -76,43 +72,13 @@ export default function PetCameraView({ devices, onNotify }) {
     }
   };
 
-  const handleFeed = async (servoAngle) => {
-    if (!canControl) {
-      onNotify('Tài khoản Người xem không có quyền điều khiển thiết bị.', 'error');
-      return;
-    }
-
-    if (!devices || devices.length === 0) {
-      onNotify('Không tìm thấy thiết bị ESP32 trong chuồng để nhận lệnh.', 'error');
-      return;
-    }
-
-    const targetDeviceObj = devices.find((d) => d.online) || devices[0];
-    if (!targetDeviceObj?.online) {
-      onNotify('Thiết bị đang ngoại tuyến (Offline), không thể gửi lệnh máng ăn.', 'error');
-      return;
-    }
-
-    const targetDevice = targetDeviceObj.device_id;
-    try {
-      await apiSendDeviceCommand(targetDevice, 'servo_set', { angle: servoAngle });
-      onNotify(`Đã mở máng ăn (${servoAngle}°) tới ${targetDevice}`);
-    } catch (err) {
-      onNotify('Lỗi gửi lệnh máng ăn: ' + err.message, 'error');
-    }
-  };
-
   return (
     <div className="dashboard-grid">
-      {/* Cột trái: Luồng Video và Điều khiển Máng Ăn */}
+      {/* Cột trái: Luồng Video */}
       <div>
         <LiveVideoPlayer
           cameraStatus={cameraStatus}
           onToggleCamera={toggleCamera}
-        />
-        <ServoController
-          devices={devices}
-          onFeed={handleFeed}
         />
       </div>
 
