@@ -113,8 +113,10 @@ export async function request(url, options = {}) {
 
   if (!response.ok) {
     let errorDetail = '';
+    let errorCode;
     try {
       const errData = await response.json();
+      errorCode = errData?.code; // device error code from a failed command, e.g. feed_limit
       errorDetail = errData.detail || errData.message || (typeof errData === 'string' ? errData : JSON.stringify(errData));
     } catch {
       errorDetail = response.statusText || '';
@@ -141,6 +143,7 @@ export async function request(url, options = {}) {
     const message = errorDetail ? `${statusPrefix} - ${errorDetail}` : statusPrefix;
     const error = new Error(message);
     error.status = response.status;
+    error.code = errorCode;
     throw error;
   }
 

@@ -16,7 +16,7 @@ def farm(ctx, monkeypatch):
                                    fault_reads=3, manual_ttl_min=1),
                   actuators=[dict(driver="relay", name="relay", pin=26),
                              dict(driver="relay", name="lamp", pin=27),
-                             dict(driver="servo", name="servo", pin=14, initial=0,
+                             dict(driver="servo", name="servo", pin=14, initial=90,
                                   max_dps=360)], feed_limit_per_day=2)
     app = App(config, ctx.identity)
     app.link = ctx.link
@@ -161,9 +161,9 @@ def test_feed_waits_for_motion_closes_before_response_and_feeds_watchdog(farm, b
     readings["temperature"] = 36
     result = feed_command(app)
     servo = app.actuator("servo")
-    assert result == dict(re="feed-1", ok=True, result=dict(seconds=1, angle=0, feed_count=1))
-    assert servo.position == servo.angle == 0 and not servo.running
-    assert 1500 <= board_environment[0] < 2000
+    assert result == dict(re="feed-1", ok=True, result=dict(seconds=1, angle=90, feed_count=1))
+    assert servo.position == servo.angle == 90 and not servo.running
+    assert 1400 <= board_environment[0] < 2000  # 1 s open + 2 x 80 deg at 360 deg/s
     assert app.watchdog.feeds >= 20 and app.actuator("relay").on
     assert len(set(servo.pwm.duty_values)) > 4  # both travel directions were driven
 
@@ -199,7 +199,7 @@ def test_feed_daily_limit_and_reset_by_uptime(farm, board_environment):
 def test_feed_bad_seconds_do_not_move_or_count(farm, seconds):
     app, _ = farm
     assert feed_command(app, seconds=seconds)["error"]["code"] == "bad_args"
-    assert app.feed_count == 0 and app.actuator("servo").position == 0
+    assert app.feed_count == 0 and app.actuator("servo").position == 90
 
 
 def test_feed_replay_cache_is_bounded(farm):
@@ -219,7 +219,7 @@ def test_feed_closes_after_error_during_hold(farm, monkeypatch):
 
     monkeypatch.setattr(commands, "pause", fail)
     assert feed_command(app)["error"]["code"] == "internal"
-    assert app.feed_count == 1 and app.actuator("servo").position == 0
+    assert app.feed_count == 1 and app.actuator("servo").position == 90
     monkeypatch.setattr(commands, "pause", original)
     assert feed_command(app)["error"]["code"] == "internal"
     assert app.feed_count == 1
@@ -239,7 +239,7 @@ def test_feed_uses_configured_angle_and_zero_means_no_slew(farm):
 
     servo.set_angle = set_angle
     assert feed_command(app)["ok"]
-    assert observed == [60, 0] and servo.position == 0
+    assert observed == [60, 90] and servo.position == 90
 
 
 def test_feed_limit_uptime_survives_ticks_wrap(farm, board_environment):
@@ -276,9 +276,9 @@ def test_feed_respects_default_backend_timeout(farm, seconds, board_environment)
     response = feed_command(app, seconds=seconds)
     if seconds >= 9:
         assert response["error"]["code"] == "bad_args"
-        assert app.feed_count == 0 and app.actuator("servo").position == 0
+        assert app.feed_count == 0 and app.actuator("servo").position == 90
     else:
-        assert response["ok"] and app.actuator("servo").position == 0
+        assert response["ok"] and app.actuator("servo").position == 90
     assert board_environment[0] < 10000
 
 
@@ -296,11 +296,33 @@ def test_feed_motion_timeout_is_bounded_and_replayed(farm, monkeypatch, board_en
     original = servo.tick
 
     def tick(now):
-        if servo.angle != 0:
+        if servo.angle != 90:
             original(now)
 
     monkeypatch.setattr(servo, "tick", tick)
     result = feed_command(app)
     assert result["error"]["code"] == "internal"
-    assert servo.angle == 0 and board_environment[0] <= commands.FEED_BUDGET_MS + 20
+    assert servo.angle == 90 and board_environment[0] <= commands.FEED_BUDGET_MS + 20
     assert feed_command(app) == result and app.feed_count == 1
+
+
+def test_feed_default_opens_at_10_and_closes_at_90(farm):
+    app, _ = farm
+    servo = app.actuator("servo")
+    observed = []
+    original = servo.set_angle
+
+    def set_angle(angle):
+        observed.append(angle)
+        original(angle)
+
+    servo.set_angle = set_angle
+    assert feed_command(app)["result"]["angle"] == 90
+    assert observed == [10, 90] and servo.position == 90
+
+
+def test_feed_rejects_equal_open_and_closed_angles(farm):
+    app, _ = farm
+    app.config["feed_open_angle"] = 90
+    assert feed_command(app)["error"]["code"] == "bad_args"
+    assert app.feed_count == 0

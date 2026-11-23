@@ -21,6 +21,8 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
   const [currentReadings, setCurrentReadings] = useState({});
   const [chartData, setChartData] = useState([]);
   const [commandHistory, setCommandHistory] = useState([]);
+  const [feedSeconds, setFeedSeconds] = useState(3);
+  const [feeding, setFeeding] = useState(false);
 
   useEffect(() => {
     if (initialBarns.length > 0) {
@@ -193,6 +195,35 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
     }
   };
 
+  // Firmware `feed`: gate opens (10°), waits `seconds`, closes (90°), then answers.
+  const FEED_ERRORS = {
+    feed_limit: 'Đã đủ số lần cho ăn trong ngày',
+    bad_args: 'Thời gian cho ăn không hợp lệ (1–8 giây)',
+    actuator_not_found: 'Thiết bị chưa cấu hình servo máng ăn',
+  };
+
+  const handleFeed = async () => {
+    if (!canControl) {
+      onNotify('Lỗi 403 (Từ chối): Tài khoản không có quyền điều khiển thiết bị.', 'error');
+      return;
+    }
+    if (!isOnline || !selectedDeviceId) {
+      onNotify('Thiết bị đang ngoại tuyến, không thể cho ăn.', 'error');
+      return;
+    }
+    setFeeding(true);
+    try {
+      const result = await apiSendDeviceCommand(selectedDeviceId, 'feed', { seconds: Number(feedSeconds) });
+      const count = result?.result?.feed_count;
+      onNotify(`Đã cho ăn ${feedSeconds} giây${count ? ` (lần ${count} hôm nay)` : ''}`);
+    } catch (err) {
+      onNotify(FEED_ERRORS[err.code] || err.message, 'error');
+    } finally {
+      setFeeding(false);
+      if (selectedBarnId) fetchCommandHistory(selectedBarnId);
+    }
+  };
+
   return (
     <div>
       <div className="card">
@@ -245,6 +276,32 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
               isOnline={isOnline}
               onRelayToggle={handleRelayToggle}
             />
+
+            <div className="card" style={{ marginTop: '16px' }}>
+              <div className="card-header">
+                <h3 className="section-subtitle" style={{ margin: 0 }}>Máng Ăn</h3>
+                <span className="text-muted">Mặc định đóng (90°), mở 10° khi cho ăn</span>
+              </div>
+              <div className="filters-row">
+                <select
+                  className="select-control"
+                  value={feedSeconds}
+                  onChange={(e) => setFeedSeconds(Number(e.target.value))}
+                  disabled={feeding}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n}>Mở {n} giây</option>
+                  ))}
+                </select>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleFeed}
+                  disabled={!canControl || !isOnline || feeding}
+                >
+                  {feeding ? 'Đang cho ăn…' : 'Cho ăn'}
+                </button>
+              </div>
+            </div>
 
             <h3 className="section-subtitle">Biểu Đồ Theo Thời Gian</h3>
             <TelemetryChart chartData={chartData} />

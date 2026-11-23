@@ -33,7 +33,8 @@
     "manual_ttl_min": 30
   },
   "feed_servo": "servo",
-  "feed_open_angle": 90,
+  "feed_open_angle": 10,
+  "feed_closed_angle": 90,
   "feed_limit_per_day": 6,
   "sensors": [
     {
@@ -51,6 +52,7 @@
       "driver": "servo",
       "name": "servo",
       "pin": 14,
+      "initial": 90,
       "min_us": 500,
       "max_us": 2400,
       "sequence": {

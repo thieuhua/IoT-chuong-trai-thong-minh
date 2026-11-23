@@ -179,7 +179,7 @@ khởi động nằm trong `config.json` (`sequence.autostart`). Thay đổi b�
 | --- | --- | --- |
 | `relay_set` | `{"name": "relay", "on": true, "duration_ms": 5000}` (`duration_ms` tùy chọn, 100–86400000, chỉ khi bật; `name` bỏ được khi chỉ có 1 relay) | trạng thái relay |
 | `mode_set` | `{"mode": "auto"}` hoặc `{"mode": "manual"}` | `{"mode": "AUTO", "fan_on": true, "sensor_ok": true}` |
-| `feed` | `{"seconds": 1}` (số nguyên 1–10) | `{"seconds": 1, "angle": 0, "feed_count": 1}`; phản hồi sau khi đã điều khiển về góc đóng |
+| `feed` | `{"seconds": 1}` (số nguyên 1–10) | `{"seconds": 1, "angle": 90, "feed_count": 1}`; phản hồi sau khi đã điều khiển về góc đóng |
 
 Trạng thái relay: `{"on": true, "off_in_ms": 4200}` (`off_in_ms` chỉ có khi đang hẹn tự tắt).
 Cấu hình: `{"driver": "relay", "name": "relay", "pin": 25, "active_low": false, "initial": false, "max_on_ms": 0}`.
@@ -191,9 +191,9 @@ lệnh lên relay khác không đổi chế độ quạt. MANUAL tự về AUTO 
 `mode_set` chỉ nhận chữ thường trong args, trạng thái trả về chữ hoa; đổi chế độ không gỡ khóa
 fail-safe. Khi khóa fail-safe, `duration_ms` và `max_on_ms` không được tắt quạt.
 
-`feed_servo` chọn tên servo (mặc định `servo`), `feed_open_angle` là góc mở (mặc định 90°, 1–180),
+`feed_servo` chọn tên servo (mặc định `servo`), `feed_open_angle` là góc mở (mặc định 10°), `feed_closed_angle` là góc đóng (mặc định 90°; 0–180, khác góc mở),
 `feed_limit_per_day` là số lượt tối đa mỗi ngày (mặc định 6, số nguyên dương).
-Feed dừng chuỗi servo, mở tới góc cấu hình, chờ `seconds`, đóng về 0°, rồi mới trả `resp`.
+Feed dừng chuỗi servo, mở tới góc cấu hình, chờ `seconds`, đóng về góc đóng, rồi mới trả `resp`.
 Backend mặc định chờ 10 giây. Firmware dành tối đa 9,5 giây cho cả mở/chờ/đóng:
 nếu `seconds` cộng thời gian di chuyển theo `max_dps` và biên 200 ms không vừa ngân sách,
 trả `bad_args` trước khi mở và không tính lượt. Vì vậy `seconds=10` luôn bị từ chối;

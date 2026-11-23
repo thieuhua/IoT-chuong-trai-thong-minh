@@ -63,7 +63,7 @@ async def test_tc74_lenh_cho_an(system):
     r = await system.call("operator", "POST", f"/devices/{device.device_id}/commands",
                           json={"name": "feed", "args": {"seconds": 1}, "timeout_s": 5})
     assert r.status_code == 200
-    assert device.actuator_state("servo")["angle"] == 0  # đóng lại sau khi cho ăn
+    assert device.actuator_state("servo")["angle"] == 90  # đóng (90°) lại sau khi cho ăn
 
 
 async def test_tc75_gui_lenh_theo_chuong(system):

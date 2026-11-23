@@ -172,9 +172,12 @@ def feed(ctx, args):
     servo = ctx.actuator(ctx.config.get("feed_servo", "servo"), "servo")
     if servo is None:
         raise CommandError(p.ERR_ACTUATOR_NOT_FOUND, "feed servo not found")
-    angle = ctx.config.get("feed_open_angle", 90)
+    # Feeder gate: closed at feed_closed_angle (default 90), open at feed_open_angle (default 10).
+    angle = ctx.config.get("feed_open_angle", 10)
+    closed = ctx.config.get("feed_closed_angle", 90)
     limit = ctx.config.get("feed_limit_per_day", 6)
-    if (type(angle) is not int or not 1 <= angle <= 180
+    if (type(angle) is not int or not 0 <= angle <= 180
+            or type(closed) is not int or not 0 <= closed <= 180 or angle == closed
             or type(limit) is not int or limit < 1
             or (servo.max_dps is not None and
                 (type(servo.max_dps) not in (int, float)
@@ -183,7 +186,7 @@ def feed(ctx, args):
     travel_ms = 0
     if servo.max_dps:
         position = servo.position if servo.position is not None else angle
-        travel_ms = (abs(position - angle) + angle) * 1000 / servo.max_dps
+        travel_ms = (abs(position - angle) + abs(angle - closed)) * 1000 / servo.max_dps
     # Include timer granularity for both moves and cooperative waits. Never shorten
     # requested dispensing time silently, or begin a command that cannot finish in time.
     if seconds * 1000 + travel_ms + 200 >= FEED_BUDGET_MS:
@@ -198,8 +201,8 @@ def feed(ctx, args):
         _feed_move(ctx, servo, angle, deadline)
         pause(seconds, ctx.feed)
     finally:
-        _feed_move(ctx, servo, 0, deadline)
-    return {"seconds": seconds, "angle": 0, "feed_count": ctx.feed_count}
+        _feed_move(ctx, servo, closed, deadline)
+    return {"seconds": seconds, "angle": closed, "feed_count": ctx.feed_count}
 
 
 def _ota_call(fn):
