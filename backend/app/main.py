@@ -6,12 +6,13 @@ import base64
 import binascii
 import ipaddress
 import json
+import math
 import os
 import socket
 import urllib.parse
 from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -679,6 +680,78 @@ async def latest(
 ):
     check_device_read_access(device_id, db, current_user)
     return public(await request.app.state.gateway.latest_telemetry(device_id))
+
+
+@app.get("/devices/{device_id}/telemetry/series")
+def telemetry_series(
+    device_id: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    points: int = Query(600, ge=1, le=2000),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Numeric sensor fields in UTC buckets over [since, until).
+
+    Naive input timestamps are interpreted as UTC, matching the MySQL store.
+    Empty buckets are retained so clients can distinguish gaps from a flat line.
+    """
+    check_device_read_access(device_id, db, current_user)
+
+    def utc(value: datetime) -> datetime:
+        return (value.replace(tzinfo=timezone.utc) if value.tzinfo is None
+                else value.astimezone(timezone.utc))
+
+    until = utc(until) if until is not None else datetime.now(timezone.utc)
+    since = utc(since) if since is not None else until - timedelta(hours=24)
+    if since >= until:
+        raise HTTPException(422, "since must be before until")
+
+    duration_s = (until - since).total_seconds()
+    bucket_s = max(1, math.ceil(duration_s / points))
+    buckets = [
+        {"time": since + timedelta(seconds=i * bucket_s), "readings": {}}
+        for i in range(math.ceil(duration_s / bucket_s))
+    ]
+
+    # The store writes UTC without tzinfo to received_at and serializes Readings
+    # as {values: {sensor: {field: value}}, errors: {...}}. Use the device/time
+    # index, project only these columns and stream rather than loading ORM rows.
+    rows = (
+        db.query(models.Telemetry.received_at, models.Telemetry.readings)
+        .filter(
+            models.Telemetry.device_id == device_id,
+            models.Telemetry.received_at >= since.replace(tzinfo=None),
+            models.Telemetry.received_at < until.replace(tzinfo=None),
+        )
+        .order_by(models.Telemetry.received_at)
+        .yield_per(1000)
+    )
+    for received_at, readings in rows:
+        index = int((utc(received_at) - since).total_seconds() // bucket_s)
+        values = readings.get("values", readings) if isinstance(readings, dict) else {}
+        if not isinstance(values, dict):
+            continue
+        for sensor, fields in values.items():
+            if not isinstance(fields, dict) or sensor == "errors":
+                continue
+            for field, value in fields.items():
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value)):
+                    continue
+                sensor_fields = buckets[index]["readings"].setdefault(sensor, {})
+                stats = sensor_fields.get(field)
+                if stats is None:
+                    sensor_fields[field] = {"avg": value, "min": value, "max": value, "count": 1}
+                else:
+                    stats["count"] += 1
+                    count = stats["count"]
+                    stats["avg"] = stats["avg"] * ((count - 1) / count) + value / count
+                    stats["min"] = min(stats["min"], value)
+                    stats["max"] = max(stats["max"], value)
+
+    return {"device_id": device_id, "since": since, "until": until,
+            "bucket_s": bucket_s, "buckets": buckets}
 
 
 @app.get("/registrations")

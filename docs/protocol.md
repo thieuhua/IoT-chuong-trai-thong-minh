@@ -97,6 +97,7 @@ Quy tắc:
 - Thiết bị đặt Last Will `{"state": "offline", "reason": "lwt"}` (retained) trước khi `connect()`.
 - Ngay sau khi kết nối: subscribe `cmd` **trước**, rồi mới publish `online` (retained) và `meta` (retained). Backend có thể gửi lệnh ngay khi thấy `online`; với clean session, lệnh tới trước SUBSCRIBE sẽ mất.
 - Trước khi chủ động reboot/ngắt: publish `offline` với lý do tương ứng, vì Last Will không chạy khi ngắt kết nối sạch.
+- Backend còn tự coi thiết bị là offline (sự kiện `status` với `reason: "timeout"`) khi không nhận tin nào trong `max(IOT_OFFLINE_AFTER = 90 s, 3 × interval_s)`. Cần cho trường hợp broker khởi động lại: Mosquitto lưu và phát lại `online` retained cũ trong khi thiết bị không còn kết nối, nên Last Will không bao giờ chạy.
 - Khi thu hồi thiết bị, backend publish payload rỗng retained vào `status` và `meta` để xóa thông điệp giữ lại.
 
 `meta` — `data`:

@@ -182,3 +182,21 @@ async def test_dynsec_suspend_only_touches_telemetry_acl():
     assert [c['command'] for c in sent] == ['removeRoleACL', 'addRoleACL']
     assert {c['topic'] for c in sent} == {p.device_topic('dev-1', p.TELEMETRY)}
     assert {c['acltype'] for c in sent} == {'publishClientSend'}
+
+
+async def test_silent_device_goes_offline_without_lwt(gateway):
+    """Broker restart replays a stale retained "online"; silence must still mean offline."""
+    from datetime import datetime, timedelta, timezone
+    events = []
+    gateway.on_status_change(events.append)
+    await request(gateway)
+    device_id = await online_device_again(gateway, (await gateway.approve(HW)).device_id)
+    now = datetime.now(timezone.utc)
+    assert await gateway.check_liveness(now + timedelta(seconds=60)) == []
+    assert (await gateway.get_device(device_id)).online
+    assert await gateway.check_liveness(now + timedelta(seconds=120)) == [device_id]
+    assert (await gateway.get_device(device_id)).lifecycle == 'offline'
+    assert (events[-1].online, events[-1].reason) == (False, 'timeout')
+    # The next message brings it back.
+    await telemetry(gateway, device_id)
+    assert (await gateway.get_device(device_id)).online

@@ -23,6 +23,10 @@ class GatewayConfig:
     auto_approve: bool = False
     db_path: Path = Path("data/iot.sqlite3")
     command_timeout_s: float = 10.0
+    # A device that sends nothing for max(offline_after_s, 3 x its interval_s) is marked offline,
+    # even without an LWT (e.g. the broker restarted and replayed a stale retained "online").
+    offline_after_s: float = 90.0
+    liveness_check_s: float = 10.0
     connect_timeout_s: float = 10.0
     client_id_prefix: str = "backend"
     bootstrap_password: str | None = None
@@ -54,6 +58,7 @@ class GatewayConfig:
             auto_approve=env.get("IOT_AUTO_APPROVE", "0").lower() in {"1", "true", "yes"},
             db_path=Path(env.get("IOT_DB_PATH", str(cls.db_path))),
             command_timeout_s=float(env.get("IOT_COMMAND_TIMEOUT", cls.command_timeout_s)),
+            offline_after_s=float(env.get("IOT_OFFLINE_AFTER", cls.offline_after_s)),
             connect_timeout_s=float(env.get("IOT_CONNECT_TIMEOUT", cls.connect_timeout_s)),
             client_id_prefix=env.get("IOT_CLIENT_ID_PREFIX", cls.client_id_prefix),
             bootstrap_password=env.get("MQTT_BOOTSTRAP_PASSWORD"),

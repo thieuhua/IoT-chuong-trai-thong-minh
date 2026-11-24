@@ -255,6 +255,13 @@ export async function apiGetDeviceTelemetry(deviceId, limit = 20) {
   return Array.isArray(res) ? res : [];
 }
 
+export async function apiGetDeviceTelemetrySeries(deviceId, { since, until, points = 600, signal } = {}) {
+  const query = new URLSearchParams({ points: String(points) });
+  if (since) query.set('since', since);
+  if (until) query.set('until', until);
+  return request(`/devices/${encodeURIComponent(deviceId)}/telemetry/series?${query}`, { signal });
+}
+
 export async function apiSendDeviceCommand(deviceId, name, args = null, timeout_s = 10) {
   return request(`/devices/${deviceId}/commands`, {
     method: 'POST',

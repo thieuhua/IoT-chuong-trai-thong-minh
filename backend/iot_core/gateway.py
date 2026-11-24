@@ -53,6 +53,7 @@ class DeviceGateway:
         self._holds: dict[str, RegistrationStatus] = {}  # device_id -> a HOLD_STATES value
         self._faults: set[str] = set()  # device_ids whose last telemetry reported sensor errors
         self._provision_lock = asyncio.Lock()
+        self._liveness_task: asyncio.Task | None = None
         self._started = False
 
     @classmethod
@@ -96,6 +97,8 @@ class DeviceGateway:
                 # resp must not queue behind an ordered handler (or event callback) that awaits it.
                 ordered = not topic.endswith("/" + protocol.RESP)
                 await self.transport.subscribe(topic, self._message, qos=1, ordered=ordered)
+            if self.config.liveness_check_s > 0:
+                self._liveness_task = asyncio.create_task(self._liveness_loop())
             self._started = True
         except BaseException:
             await self.stop()
@@ -103,6 +106,13 @@ class DeviceGateway:
 
     async def stop(self) -> None:
         """Cancel pending commands (CommandTimeout), disconnect, close stores."""
+        if self._liveness_task is not None:
+            self._liveness_task.cancel()
+            try:
+                await self._liveness_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._liveness_task = None
         for _, future in list(self._pending.values()):
             if not future.done():
                 future.set_exception(CommandTimeout("Gateway stopped"))
@@ -429,6 +439,42 @@ class DeviceGateway:
         await self.registry.save_registration(registration)
         await reply(self, registration)
         return device
+
+    async def _liveness_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.config.liveness_check_s)
+            try:
+                await self.check_liveness()
+            except Exception:
+                logging.getLogger("iot_core").exception("Liveness check failed")
+
+    async def check_liveness(self, now: datetime | None = None) -> list[str]:
+        """Mark silent devices offline; returns their ids.
+
+        The LWT covers a device that drops while the broker keeps running. It does not cover a
+        broker restart: the persisted retained "online" is replayed with nobody connected, so
+        silence (no status, meta or telemetry) beyond the timeout also means offline.
+        """
+        now = now or datetime.now(timezone.utc)
+        silent = []
+        for device in await self.registry.list_devices():
+            if not device.online:
+                continue
+            seen = device.last_seen
+            if seen is not None and seen.tzinfo is None:
+                seen = seen.replace(tzinfo=timezone.utc)
+            limit = max(self.config.offline_after_s, 3 * (device.interval_s or 0))
+            if seen is not None and (now - seen).total_seconds() < limit:
+                continue
+            fresh = await self.registry.get_device(device.device_id)  # a message may have arrived
+            if fresh is None or not fresh.online or fresh.last_seen != device.last_seen:
+                continue
+            fresh.online = False
+            await self.registry.save_device(fresh)
+            silent.append(fresh.device_id)
+            logging.getLogger("iot_core").info("%s silent for %.0f s: offline", fresh.device_id, limit)
+            await self._emit("status", StatusEvent(fresh.device_id, False, "timeout", now))
+        return silent
 
     async def _connection_changed(self, connected: bool) -> None:
         if connected:

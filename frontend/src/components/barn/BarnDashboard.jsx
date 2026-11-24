@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   apiGetBarns,
   apiGetDeviceLatestTelemetry,
-  apiGetDeviceTelemetry,
+  apiGetDeviceTelemetrySeries,
   apiGetBarnCommands,
   apiSendDeviceCommand,
   subscribeToEvents,
@@ -12,6 +12,10 @@ import ClimateCard from './ClimateCard';
 import TelemetryChart from './TelemetryChart';
 import EmptyState from '../common/EmptyState';
 
+// Short ranges refresh at the device's telemetry pace (5 s) for live demos; long
+// ranges aggregate days of rows per request, so refresh them less often.
+const seriesRefreshMs = (rangeHours) => (rangeHours <= 6 ? 5_000 : 30_000);
+
 export default function BarnDashboard({ barns: initialBarns = [], devices = [], onNotify }) {
   const { canControl } = useAuth();
   const [barns, setBarns] = useState(initialBarns);
@@ -19,7 +23,10 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
 
   const [currentReadings, setCurrentReadings] = useState({});
-  const [chartData, setChartData] = useState([]);
+  const [series, setSeries] = useState(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [seriesError, setSeriesError] = useState('');
+  const [rangeHours, setRangeHours] = useState(24);
   const [commandHistory, setCommandHistory] = useState([]);
   const [feedSeconds, setFeedSeconds] = useState(3);
   const [feeding, setFeeding] = useState(false);
@@ -82,6 +89,7 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
   }, [selectedBarnId]);
 
   useEffect(() => {
+    setCurrentReadings({});
     if (!selectedDeviceId) return;
 
     let isMounted = true;
@@ -94,31 +102,6 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
 
         const vals = latest?.readings?.values || latest?.readings || {};
         setCurrentReadings(vals);
-
-        const history = await apiGetDeviceTelemetry(selectedDeviceId, 12).catch(() => []);
-        if (!isMounted) return;
-
-        const mapped = history
-          .map((item) => {
-            const dt = new Date(item.received_at);
-            const timeStr = `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
-            let t = null;
-            let h = null;
-            const itemVals = item.readings?.values || item.readings || {};
-            for (const sName of Object.keys(itemVals)) {
-              const s = itemVals[sName];
-              if (!s || typeof s !== 'object') continue;
-              if (s.temp !== undefined) t = s.temp;
-              if (s.temperature !== undefined) t = s.temperature;
-              if (s.hum !== undefined) h = s.hum;
-              if (s.humidity !== undefined) h = s.humidity;
-            }
-            return { time: timeStr, temp: t, hum: h };
-          })
-          .filter((pt) => pt.temp !== null || pt.hum !== null)
-          .reverse();
-
-        setChartData(mapped);
       } catch (err) {
         console.error('Lỗi tải dữ liệu telemetry ban đầu:', err);
       }
@@ -133,26 +116,6 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
       if (type === 'telemetry' && data.device_id === selectedDeviceId) {
         const vals = data.readings?.values || data.readings || {};
         setCurrentReadings(vals);
-
-        const dt = new Date(data.received_at || Date.now());
-        const timeStr = `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
-        let t = null;
-        let h = null;
-        for (const sName of Object.keys(vals)) {
-          const s = vals[sName];
-          if (!s || typeof s !== 'object') continue;
-          if (s.temp !== undefined) t = s.temp;
-          if (s.temperature !== undefined) t = s.temperature;
-          if (s.hum !== undefined) h = s.hum;
-          if (s.humidity !== undefined) h = s.humidity;
-        }
-
-        if (t !== null || h !== null) {
-          setChartData((prev) => {
-            const next = [...prev, { time: timeStr, temp: t, hum: h }];
-            return next.length > 12 ? next.slice(-12) : next;
-          });
-        }
       }
     });
 
@@ -161,6 +124,46 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
       unsubscribeSSE();
     };
   }, [selectedDeviceId]);
+
+  useEffect(() => {
+    setSeries(null);
+    setSeriesError('');
+    setSeriesLoading(Boolean(selectedDeviceId));
+    if (!selectedDeviceId) return;
+
+    let active = true;
+    let pending = false;
+    const controller = new AbortController();
+    const loadSeries = async () => {
+      if (pending) return;
+      pending = true;
+      const until = new Date();
+      const since = new Date(until.getTime() - rangeHours * 3600 * 1000);
+      try {
+        const result = await apiGetDeviceTelemetrySeries(selectedDeviceId, {
+          since: since.toISOString(), until: until.toISOString(), points: 600,
+          signal: controller.signal,
+        });
+        if (active) {
+          setSeries(result);
+          setSeriesError('');
+        }
+      } catch (err) {
+        if (active) setSeriesError(err.message || 'Không tải được biểu đồ.');
+      } finally {
+        pending = false;
+        if (active) setSeriesLoading(false);
+      }
+    };
+
+    loadSeries();
+    const timer = setInterval(loadSeries, seriesRefreshMs(rangeHours));
+    return () => {
+      active = false;
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [selectedDeviceId, rangeHours]);
 
   const handleRelayToggle = async (on) => {
     if (!canControl) {
@@ -307,7 +310,16 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
             </div>
 
             <h3 className="section-subtitle">Biểu Đồ Theo Thời Gian</h3>
-            <TelemetryChart chartData={chartData} />
+            <TelemetryChart
+              key={selectedDeviceId}
+              series={series?.device_id === selectedDeviceId ? series : null}
+              sensors={currentDev?.sensors}
+              rangeHours={rangeHours}
+              onRangeChange={setRangeHours}
+              loading={seriesLoading}
+              error={seriesError}
+              refreshSeconds={seriesRefreshMs(rangeHours) / 1000}
+            />
 
             <div style={{ marginTop: '28px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
