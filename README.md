@@ -1,11 +1,21 @@
+# Hệ thống giám sát và điều khiển chuồng trại thông minh (IoT)
 
+Bài tập lớn môn IoT và ứng dụng, Nhóm 19 (Học viện Công nghệ Bưu chính Viễn thông), giảng viên Kim Ngọc Bách.
 
+Mỗi chuồng có một ESP32 chạy MicroPython đọc DHT11, bật tắt quạt 5 V và mở máng ăn bằng servo SG90. Thiết bị nói chuyện với backend FastAPI + MySQL qua MQTT (Mosquitto, Dynamic Security, mỗi thiết bị một tài khoản). Web React hiển thị dashboard, biểu đồ, cảnh báo và điều khiển theo 3 vai trò Admin, Operator, Viewer.
 
-```
-py -3.11 venv .venv
+| Thành viên | MSSV | GitHub |
+| --- | --- | --- |
+| Hứa Xuân Thiệu (nhóm trưởng) | B23DCCN788 | thieuhua |
+| Hoàng Anh Minh | B23DCCN544 | HoangAnhMinhCN |
+| Bùi Hồng Phong | B23DCCN641 | Pp |
 
-
-```
+- Báo cáo: [docs/bao-cao/](docs/bao-cao/) (docx + PDF)
+- Giao thức MQTT: [docs/protocol.md](docs/protocol.md)
+- Phần cứng, sơ đồ chân, BOM: [hardware/](hardware/)
+- CSDL: [database/schema.sql](database/schema.sql)
+- Biến môi trường mẫu: [.env.example](.env.example) (bản dùng thật đặt ở `deployment/.env`)
+- Kiểm thử hệ thống: [tests/](tests/)
 
 ## Nền tảng thiết bị ESP32 + Mosquitto
 
