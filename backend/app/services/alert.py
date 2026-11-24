@@ -63,6 +63,8 @@ def acknowledge_alert(
             "Cannot acknowledge a closed alert"
         )
 
+    # An empty note keeps the existing one (the description written when the alert opened).
+    note = note or target_alert.note
     changed = (
         target_alert.status != "acknowledged"
         or target_alert.handled_by != current_user.id
@@ -101,7 +103,7 @@ def close_alert(
 
     target_alert.status = "closed"
     target_alert.handled_by = current_user.id
-    target_alert.note = note
+    target_alert.note = note or target_alert.note
     target_alert.closed_at = datetime.utcnow()
 
     record_change(db, current_user.id, "alert.close", f"alerts:{alert_id}")

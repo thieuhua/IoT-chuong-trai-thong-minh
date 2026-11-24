@@ -42,15 +42,25 @@ class AlertEngine:
                 if isinstance(value, (int, float)) and not isinstance(value, bool)
                 and math.isfinite(value)]
 
+    METRIC_LABELS = {"temperature": ("Nhiệt độ", " °C"), "humidity": ("Độ ẩm", " %")}
+
+    @classmethod
+    def _rule_note(cls, rule, value):
+        """Human-readable description stored in Alert.note, e.g. 'Nhiệt độ 27 °C > ngưỡng 26 °C'."""
+        name = rule.metric.removeprefix("readings.").split(".")[-1]
+        label, unit = cls.METRIC_LABELS.get(name, (rule.metric, ""))
+        fmt = lambda v: f"{v:g}{unit}"
+        return f"{label} {fmt(value)} {rule.op} ngưỡng {fmt(rule.threshold)}"
+
     @staticmethod
-    def _open_alert(db, device_id, rule_id, severity, at):
+    def _open_alert(db, device_id, rule_id, severity, at, note=None):
         existing = db.query(models.Alert).filter(
             models.Alert.device_id == device_id, models.Alert.rule_id == rule_id,
             models.Alert.status == "open",
         ).first()
         if existing is None:
             db.add(models.Alert(id=str(uuid4()), device_id=device_id, rule_id=rule_id,
-                                severity=severity, status="open", raised_at=at))
+                                severity=severity, status="open", raised_at=at, note=note))
             db.flush()
 
     def _telemetry_sync(self, record):
@@ -69,13 +79,14 @@ class AlertEngine:
                 old_signature, count = self._counts.get(key, (None, 0))
                 compare = self.OPERATORS.get(rule.op)
                 values = self._metric_values(record.readings, rule.metric)
-                breached = compare is not None and any(compare(v, rule.threshold) for v in values)
+                hits = [v for v in values if compare is not None and compare(v, rule.threshold)]
+                breached = bool(hits)
                 count = (count + 1 if old_signature == signature else 1) if breached else 0
                 hold = max(1, rule.hold_samples or 1)
                 self._counts[key] = (signature, min(count, hold))
                 if count >= hold:
                     self._open_alert(db, record.device_id, rule.id, rule.severity,
-                                     record.received_at)
+                                     record.received_at, self._rule_note(rule, hits[0]))
             db.commit()
 
     def _status_sync(self, event):
@@ -85,5 +96,6 @@ class AlertEngine:
                         if key[0] != event.device_id}
         with self._session_factory() as db:
             if db.get(models.Device, event.device_id) is not None:
-                self._open_alert(db, event.device_id, None, "critical", event.at)
+                self._open_alert(db, event.device_id, None, "critical", event.at,
+                                 "Thiết bị mất kết nối")
                 db.commit()

@@ -23,7 +23,7 @@ export default function AlertsCenter({ alerts, onRefreshAlerts, onNotify }) {
 
   const handleAck = async (alertId) => {
     try {
-      await apiAcknowledgeAlert(alertId, 'Đã tiếp nhận');
+      await apiAcknowledgeAlert(alertId);
       onNotify('Đã tiếp nhận cảnh báo.');
       onRefreshAlerts();
     } catch (err) {
@@ -33,7 +33,7 @@ export default function AlertsCenter({ alerts, onRefreshAlerts, onNotify }) {
 
   const handleClose = async (alertId) => {
     try {
-      await apiCloseAlert(alertId, 'Đã đóng');
+      await apiCloseAlert(alertId);
       onNotify('Đã đóng cảnh báo.');
       onRefreshAlerts();
     } catch (err) {
