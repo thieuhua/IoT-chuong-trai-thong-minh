@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
-  apiGetBarns,
   apiGetDeviceLatestTelemetry,
   apiGetDeviceTelemetrySeries,
   apiGetBarnCommands,
@@ -11,85 +10,88 @@ import {
 import ClimateCard from './ClimateCard';
 import TelemetryChart from './TelemetryChart';
 import EmptyState from '../common/EmptyState';
+import { resolveBarnSelection } from './barnSelectionUtils';
+
+const SELECTION_STORAGE_KEY = 'barnDashboard.selection';
+const EMPTY_LIST = [];
+
+function loadSelection() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SELECTION_STORAGE_KEY));
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSelection(selection) {
+  try {
+    localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(selection));
+  } catch {
+    // Storage may be disabled or full; selection still works in memory.
+  }
+}
 
 // Short ranges refresh at the device's telemetry pace (5 s) for live demos; long
 // ranges aggregate days of rows per request, so refresh them less often.
 const seriesRefreshMs = (rangeHours) => (rangeHours <= 6 ? 5_000 : 30_000);
 
-export default function BarnDashboard({ barns: initialBarns = [], devices = [], onNotify }) {
+export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST, onNotify }) {
   const { canControl } = useAuth();
-  const [barns, setBarns] = useState(initialBarns);
-  const [selectedBarnId, setSelectedBarnId] = useState('');
-  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [selection, setSelection] = useState(loadSelection);
+  const {
+    zones, zoneBarns, barnDevices, sensors, currentBarn, currentDev, currentSensor,
+    selection: resolvedSelection,
+  } = useMemo(() => resolveBarnSelection(barns, devices, selection), [barns, devices, selection]);
+  const {
+    zone: selectedZone, barnId: selectedBarnId, deviceId: selectedDeviceId, sensorName: selectedSensorName,
+  } = resolvedSelection;
+  const isOnline = Boolean(currentDev?.online);
 
-  const [currentReadings, setCurrentReadings] = useState({});
+  const [latestTelemetry, setLatestTelemetry] = useState(null);
+  const currentReadings = latestTelemetry?.deviceId === selectedDeviceId ? latestTelemetry.values : {};
   const [series, setSeries] = useState(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [seriesError, setSeriesError] = useState('');
   const [rangeHours, setRangeHours] = useState(24);
-  const [commandHistory, setCommandHistory] = useState([]);
+  const [history, setHistory] = useState(null);
+  const commandHistory = history?.deviceId === selectedDeviceId ? history.commands : [];
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const refreshCommandHistory = () => setHistoryRevision((revision) => revision + 1);
   const [feedSeconds, setFeedSeconds] = useState(3);
   const [feeding, setFeeding] = useState(false);
 
-  useEffect(() => {
-    if (initialBarns.length > 0) {
-      setBarns(initialBarns);
-      if (!selectedBarnId) setSelectedBarnId(initialBarns[0].id);
-    } else {
-      const fetchBarns = async () => {
-        try {
-          const res = await apiGetBarns();
-          setBarns(res);
-          if (res.length > 0 && !selectedBarnId) {
-            setSelectedBarnId(res[0].id);
-          }
-        } catch {
-          // Bỏ qua nếu chưa tải được danh sách chuồng
-        }
-      };
-      fetchBarns();
-    }
-  }, [initialBarns]);
-
-  // Lọc thiết bị theo chuồng đã chọn (nếu có gán chuồng)
-  const barnDevices = selectedBarnId
-    ? devices.filter((d) => d.barn_id === selectedBarnId || !d.barn_id)
-    : devices;
-
-  useEffect(() => {
-    if (barnDevices.length > 0) {
-      const exists = barnDevices.some((d) => d.device_id === selectedDeviceId);
-      if (!exists) {
-        setSelectedDeviceId(barnDevices[0].device_id);
-      }
-    } else if (devices.length > 0 && !selectedDeviceId) {
-      setSelectedDeviceId(devices[0].device_id);
-    } else if (!devices || devices.length === 0) {
-      setSelectedDeviceId('');
-    }
-  }, [barnDevices, selectedDeviceId, devices]);
-
-  const currentDev = devices.find((d) => d.device_id === selectedDeviceId);
-  const isOnline = Boolean(currentDev?.online);
-
-  const fetchCommandHistory = async (barnId) => {
-    if (!barnId) return;
-    try {
-      const cmds = await apiGetBarnCommands(barnId);
-      setCommandHistory(cmds);
-    } catch {
-      // Bỏ qua lỗi tải lịch sử lệnh
-    }
+  const handleSelectionChange = (next) => {
+    const validSelection = resolveBarnSelection(barns, devices, next).selection;
+    setSelection(validSelection);
+    saveSelection(validSelection);
   };
 
   useEffect(() => {
-    if (selectedBarnId) {
-      fetchCommandHistory(selectedBarnId);
-    }
-  }, [selectedBarnId]);
+    // Keep the saved path while the parent's initial device list is loading.
+    if (!selectedDeviceId) return;
+    const next = { zone: selectedZone, barnId: selectedBarnId, deviceId: selectedDeviceId, sensorName: selectedSensorName };
+    setSelection((previous) => Object.keys(next).every((key) => previous[key] === next[key]) ? previous : next);
+    saveSelection(next);
+  }, [selectedZone, selectedBarnId, selectedDeviceId, selectedSensorName]);
 
   useEffect(() => {
-    setCurrentReadings({});
+    setHistory(null);
+    if (!selectedBarnId || !selectedDeviceId) return;
+    let active = true;
+    apiGetBarnCommands(selectedBarnId).then((commands) => {
+      if (active) setHistory({
+        deviceId: selectedDeviceId,
+        commands: commands.filter((command) => command.device_id === selectedDeviceId),
+      });
+    }).catch(() => {
+      // Bỏ qua lỗi tải lịch sử lệnh
+    });
+    return () => { active = false; };
+  }, [selectedBarnId, selectedDeviceId, historyRevision]);
+
+  useEffect(() => {
+    setLatestTelemetry(null);
     if (!selectedDeviceId) return;
 
     let isMounted = true;
@@ -101,7 +103,7 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
         if (!isMounted) return;
 
         const vals = latest?.readings?.values || latest?.readings || {};
-        setCurrentReadings(vals);
+        setLatestTelemetry({ deviceId: selectedDeviceId, values: vals });
       } catch (err) {
         console.error('Lỗi tải dữ liệu telemetry ban đầu:', err);
       }
@@ -115,7 +117,7 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
 
       if (type === 'telemetry' && data.device_id === selectedDeviceId) {
         const vals = data.readings?.values || data.readings || {};
-        setCurrentReadings(vals);
+        setLatestTelemetry({ deviceId: selectedDeviceId, values: vals });
       }
     });
 
@@ -193,9 +195,7 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
       }
 
       onNotify(`Đã gửi lệnh ${isOn ? 'bật' : 'tắt'} quạt`);
-      if (selectedBarnId) {
-        fetchCommandHistory(selectedBarnId);
-      }
+      refreshCommandHistory();
     } catch (err) {
       onNotify(err.message, 'error');
     }
@@ -226,7 +226,7 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
       onNotify(FEED_ERRORS[err.code] || err.message, 'error');
     } finally {
       setFeeding(false);
-      if (selectedBarnId) fetchCommandHistory(selectedBarnId);
+      refreshCommandHistory();
     }
   };
 
@@ -236,48 +236,91 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
         <div className="card-header">
           <div>
             <h2 className="card-title">Môi Trường Chuồng Trại</h2>
-          </div>
-
-          <div className="filters-row">
-            {barns.length > 0 && (
-              <select
-                value={selectedBarnId}
-                onChange={(e) => setSelectedBarnId(e.target.value)}
-                className="select-control"
-              >
-                {barns.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    Khu: {b.name}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {devices && devices.length > 0 && (
-              <select
-                value={selectedDeviceId}
-                onChange={(e) => setSelectedDeviceId(e.target.value)}
-                className="select-control"
-              >
-                {barnDevices.map((d) => (
-                  <option key={d.device_id} value={d.device_id}>
-                    {d.name || d.device_id} ({d.online ? 'Online' : 'Offline'})
-                  </option>
-                ))}
-              </select>
+            {selectedZone && (
+              <p className="card-desc" aria-label="Vị trí cảm biến">
+                {[selectedZone, currentBarn?.name || selectedBarnId, selectedSensorName].filter(Boolean).join(' / ')}
+              </p>
             )}
           </div>
         </div>
 
-        {!devices || devices.length === 0 ? (
+        <div className="chart-controls" aria-label="Chọn khu, chuồng và cảm biến">
+          <label className="chart-control">
+            <span>Khu</span>
+            <select
+              value={selectedZone}
+              onChange={(event) => handleSelectionChange({ zone: event.target.value })}
+              className="select-control"
+              disabled={zones.length === 0}
+            >
+              {zones.length === 0 && <option value="">Chưa có khu</option>}
+              {zones.map((zone) => <option key={zone.name} value={zone.name}>{zone.name}</option>)}
+            </select>
+          </label>
+          <label className="chart-control">
+            <span>Chuồng</span>
+            <select
+              value={selectedBarnId}
+              onChange={(event) => handleSelectionChange({ zone: selectedZone, barnId: event.target.value })}
+              className="select-control"
+              disabled={zoneBarns.length === 0}
+            >
+              {zoneBarns.length === 0 && <option value="">Chưa có chuồng</option>}
+              {zoneBarns.map((barn) => <option key={barn.id} value={barn.id}>{barn.name || barn.id}</option>)}
+            </select>
+          </label>
+          {barnDevices.length > 1 ? (
+            <label className="chart-control">
+              <span>Thiết bị</span>
+              <select
+                value={selectedDeviceId}
+                onChange={(event) => handleSelectionChange({
+                  zone: selectedZone, barnId: selectedBarnId, deviceId: event.target.value,
+                })}
+                className="select-control"
+              >
+                {barnDevices.map((device) => (
+                  <option key={device.device_id} value={device.device_id}>
+                    {device.name || device.device_id} ({device.online ? 'Online' : 'Offline'})
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : currentDev ? (
+            <div className="chart-control">
+              <span>Thiết bị</span>
+              <strong>{currentDev.name || currentDev.device_id}</strong>
+            </div>
+          ) : null}
+          <label className="chart-control">
+            <span>Cảm biến</span>
+            <select
+              value={selectedSensorName}
+              onChange={(event) => handleSelectionChange({ ...resolvedSelection, sensorName: event.target.value })}
+              className="select-control"
+              disabled={sensors.length === 0}
+            >
+              {sensors.length === 0 && <option value="">Chưa có cảm biến</option>}
+              {sensors.map((sensor) => <option key={sensor.name} value={sensor.name}>{sensor.name}</option>)}
+            </select>
+          </label>
+        </div>
+
+        {!currentBarn ? (
+          <EmptyState icon="🏠" title="Chưa có chuồng" message="Tạo chuồng để theo dõi môi trường theo khu." />
+        ) : !currentDev ? (
           <EmptyState
             icon="🔌"
-            title="Chưa có thiết bị kết nối"
+            title="Chuồng chưa có thiết bị"
+            message={`Gán thiết bị vào ${currentBarn.name || selectedBarnId} để theo dõi môi trường và điều khiển.`}
           />
         ) : (
           <>
+            {!currentSensor && (
+              <EmptyState icon="🌡️" title="Thiết bị chưa có cảm biến" message="Chưa có cảm biến để hiển thị số đo và biểu đồ." />
+            )}
             <ClimateCard
-              device={currentDev}
+              sensor={currentSensor}
               currentReadings={currentReadings}
               isOnline={isOnline}
               onRelayToggle={handleRelayToggle}
@@ -309,25 +352,29 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
               </div>
             </div>
 
-            <h3 className="section-subtitle">Biểu Đồ Theo Thời Gian</h3>
-            <TelemetryChart
-              key={selectedDeviceId}
-              series={series?.device_id === selectedDeviceId ? series : null}
-              sensors={currentDev?.sensors}
-              rangeHours={rangeHours}
-              onRangeChange={setRangeHours}
-              loading={seriesLoading}
-              error={seriesError}
-              refreshSeconds={seriesRefreshMs(rangeHours) / 1000}
-            />
+            {currentSensor && (
+              <>
+                <h3 className="section-subtitle">Biểu Đồ Theo Thời Gian</h3>
+                <TelemetryChart
+                  key={selectedDeviceId}
+                  series={series?.device_id === selectedDeviceId ? series : null}
+                  sensor={selectedSensorName}
+                  rangeHours={rangeHours}
+                  onRangeChange={setRangeHours}
+                  loading={seriesLoading}
+                  error={seriesError}
+                  refreshSeconds={seriesRefreshMs(rangeHours) / 1000}
+                />
+              </>
+            )}
 
             <div style={{ marginTop: '28px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h3 className="section-subtitle" style={{ margin: 0 }}>Lịch Sử Lệnh Chuồng</h3>
+                <h3 className="section-subtitle" style={{ margin: 0 }}>Lịch Sử Lệnh Thiết Bị</h3>
                 {selectedBarnId && (
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => fetchCommandHistory(selectedBarnId)}
+                    onClick={refreshCommandHistory}
                   >
                     Làm mới lệnh
                   </button>
@@ -335,7 +382,7 @@ export default function BarnDashboard({ barns: initialBarns = [], devices = [], 
               </div>
 
               {commandHistory.length === 0 ? (
-                <p className="empty-state-text">Chưa có lệnh nào được phát xuống chuồng này.</p>
+                <p className="empty-state-text">Chưa có lệnh nào được phát xuống thiết bị này.</p>
               ) : (
                 <table className="data-table">
                   <thead>

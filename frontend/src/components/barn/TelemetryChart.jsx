@@ -11,8 +11,7 @@ const date = (time) => {
   return `${String(value.getDate()).padStart(2, '0')}/${String(value.getMonth() + 1).padStart(2, '0')}`;
 };
 
-export default function TelemetryChart({ series, sensors = [], rangeHours, onRangeChange, loading, error, refreshSeconds = 30 }) {
-  const [sensor, setSensor] = useState('room');
+export default function TelemetryChart({ series, sensor, rangeHours, onRangeChange, loading, error, refreshSeconds = 30 }) {
   const [hovered, setHovered] = useState(null);
   const [width, setWidth] = useState(900);
   const stage = useRef(null);
@@ -28,14 +27,6 @@ export default function TelemetryChart({ series, sensors = [], rangeHours, onRan
   }, []);
 
   useEffect(() => setHovered(null), [series, sensor]);
-
-  const sensorNames = useMemo(() => {
-    const names = new Set(['room']);
-    if (Array.isArray(sensors)) sensors.forEach((item) => { if (item.name) names.add(item.name); });
-    for (const bucket of series?.buckets || []) Object.keys(bucket.readings).forEach((name) => names.add(name));
-    names.add(sensor);
-    return [...names];
-  }, [series, sensors, sensor]);
 
   const plots = useMemo(() => METRICS.map((metric) => {
     const segments = metricSegments(series, sensor, metric);
@@ -95,12 +86,6 @@ export default function TelemetryChart({ series, sensors = [], rangeHours, onRan
           <span>Khoảng thời gian</span>
           <select className="select-control" value={rangeHours} onChange={(event) => onRangeChange(Number(event.target.value))}>
             {RANGES.map(([hours, label]) => <option key={hours} value={hours}>{label}</option>)}
-          </select>
-        </label>
-        <label className="chart-control">
-          <span>Cảm biến</span>
-          <select className="select-control" value={sensor} onChange={(event) => setSensor(event.target.value)}>
-            {sensorNames.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
         </label>
         <span className="chart-status" role="status">

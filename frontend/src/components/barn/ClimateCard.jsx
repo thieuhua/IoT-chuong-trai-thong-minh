@@ -26,77 +26,30 @@ function getFieldMeta(fieldName, sensorName) {
 }
 
 export default function ClimateCard({
-  device,
+  sensor,
   currentReadings = {},
   isOnline = false,
   onRelayToggle,
 }) {
   const { canControl } = useAuth();
 
-  // Sinh danh sách cảm biến động từ device.sensors
-  const sensorCards = [];
-  const sensors = device?.sensors;
-
-  if (Array.isArray(sensors) && sensors.length > 0) {
-    for (const sensor of sensors) {
-      const sName = sensor.name || 'sensor';
-      const fields = sensor.fields || {};
-      const sReadings = (currentReadings && currentReadings[sName]) || currentReadings || {};
-
-      for (const [fieldName, unit] of Object.entries(fields)) {
-        let val = sReadings[fieldName];
-        if (val === undefined && currentReadings && currentReadings[fieldName] !== undefined) {
-          val = currentReadings[fieldName];
-        }
-
-        const meta = getFieldMeta(fieldName, sName);
-        const displayUnit = unit || meta.defaultUnit;
-        const valText = val !== null && val !== undefined ? `${val} ${displayUnit}`.trim() : '--';
-
-        sensorCards.push({
-          id: `${sName}_${fieldName}`,
-          icon: meta.icon,
-          label: meta.defaultLabel,
-          colorClass: meta.colorClass,
-          value: valText,
-        });
-      }
-    }
-  }
-
-  // Fallback nếu device.sensors chưa tải được hoặc rỗng
-  if (sensorCards.length === 0) {
-    let temp = null;
-    let hum = null;
-    if (currentReadings && typeof currentReadings === 'object') {
-      for (const key of Object.keys(currentReadings)) {
-        const val = currentReadings[key];
-        if (val && typeof val === 'object') {
-          if (val.temp !== undefined) temp = val.temp;
-          if (val.temperature !== undefined) temp = val.temperature;
-          if (val.hum !== undefined) hum = val.hum;
-          if (val.humidity !== undefined) hum = val.humidity;
-        } else if (typeof val === 'number') {
-          if (key === 'temp' || key === 'temperature') temp = val;
-          if (key === 'hum' || key === 'humidity') hum = val;
-        }
-      }
-    }
-    sensorCards.push({
-      id: 'temp',
-      icon: '🌡️',
-      label: 'Nhiệt Độ',
-      colorClass: 'text-amber',
-      value: temp !== null ? `${temp} °C` : '--',
-    });
-    sensorCards.push({
-      id: 'hum',
-      icon: '💧',
-      label: 'Độ Ẩm',
-      colorClass: 'text-blue',
-      value: hum !== null ? `${hum} %` : '--',
-    });
-  }
+  // Read only the selected sensor; missing readings must not use another sensor.
+  const readings = currentReadings?.[sensor?.name] || {};
+  const fields = Object.keys(sensor?.fields || {}).length > 0
+    ? sensor.fields
+    : Object.fromEntries(Object.keys(readings).map((name) => [name, '']));
+  const sensorCards = sensor ? Object.entries(fields).map(([fieldName, unit]) => {
+    const meta = getFieldMeta(fieldName, sensor.name);
+    const value = readings[fieldName];
+    const displayUnit = unit || meta.defaultUnit;
+    return {
+      id: `${sensor.name}_${fieldName}`,
+      icon: meta.icon,
+      label: meta.defaultLabel,
+      colorClass: meta.colorClass,
+      value: value !== null && value !== undefined ? `${value} ${displayUnit}`.trim() : '--',
+    };
+  }) : [];
 
   return (
     <div className="env-grid">
