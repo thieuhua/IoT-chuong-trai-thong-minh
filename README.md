@@ -1,11 +1,21 @@
+# Hệ thống giám sát và điều khiển chuồng trại thông minh (IoT)
 
+Bài tập lớn môn IoT và ứng dụng, Nhóm 19 (Học viện Công nghệ Bưu chính Viễn thông), giảng viên Kim Ngọc Bách.
 
+Mỗi chuồng có một ESP32 chạy MicroPython đọc DHT11, bật tắt quạt 5 V và mở máng ăn bằng servo SG90. Thiết bị nói chuyện với backend FastAPI + MySQL qua MQTT (Mosquitto, Dynamic Security, mỗi thiết bị một tài khoản). Web React hiển thị dashboard, biểu đồ, cảnh báo và điều khiển theo 3 vai trò Admin, Operator, Viewer.
 
-```
-py -3.11 venv .venv
+| Thành viên | MSSV | GitHub |
+| --- | --- | --- |
+| Hứa Xuân Thiệu (nhóm trưởng) | B23DCCN788 | thieuhua |
+| Hoàng Anh Minh | B23DCCN544 | HoangAnhMinhCN |
+| Bùi Hồng Phong | B23DCCN641 | Pp |
 
-
-```
+- Báo cáo: [docs/bao-cao/](docs/bao-cao/) (docx + PDF)
+- Giao thức MQTT: [docs/protocol.md](docs/protocol.md)
+- Phần cứng, sơ đồ chân, BOM: [hardware/](hardware/)
+- CSDL: [database/schema.sql](database/schema.sql)
+- Biến môi trường mẫu: [.env.example](.env.example) (bản dùng thật đặt ở `deployment/.env`)
+- Kiểm thử hệ thống: [tests/](tests/)
 
 ## Nền tảng thiết bị ESP32 + Mosquitto
 
@@ -17,7 +27,59 @@ py -3.11 venv .venv
 | [backend/](backend/README.md) | `iot_core` (`DeviceGateway`), server tạm FastAPI, simulator, test |
 | [firmware/](firmware/README.md) | Firmware MicroPython chia module, `tools/deploy.ps1` |
 
-Chạy nhanh (PowerShell, tại thư mục gốc):
+## Chạy nhanh bằng Docker
+
+Chạy các lệnh dưới đây bằng PowerShell tại thư mục gốc repo, trừ khi có ghi chú.
+
+1. Cài và mở Docker Desktop. Chép [deployment/.env.example](deployment/.env.example)
+   thành `deployment/.env` nếu chưa có; cấu hình mật khẩu broker, bỏ dấu `#` và điền
+   `DATABASE_URL`, `JWT_SECRET_KEY` bằng giá trị riêng.
+   MySQL phải chạy trên máy ở cổng **3306**, có sẵn database theo `DATABASE_URL`.
+   Trên Windows, mở **PowerShell Administrator** và chạy `Start-Service MySQL8044`.
+   Backend trong Docker tự đổi host `localhost`/`127.0.0.1` trong URL MySQL thành
+   `host.docker.internal`.
+2. Nếu chưa có `just`, cài bằng `winget install --id Casey.Just -e`.
+   Các lệnh sau dùng profile `app` trong [deployment/compose.yaml](deployment/compose.yaml):
+
+   | Lệnh `just` | Tương đương khi không có `just` |
+   | --- | --- |
+   | `just up` | `docker compose -f deployment/compose.yaml --profile app up -d --build --wait` |
+   | `just down` | `docker compose -f deployment/compose.yaml --profile app down` |
+   | `just status` | `docker compose -f deployment/compose.yaml --profile app ps` |
+   | `just logs [service]` | `docker compose -f deployment/compose.yaml --profile app logs --tail 100 -f [service]` |
+
+   `[service]` là tùy chọn: bỏ đi để xem tất cả, hoặc thay bằng `backend`, `frontend`,
+   `mosquitto` (ví dụ `just logs backend`). Nhấn Ctrl+C để ngừng xem log.
+3. Sau khi `just up` thành công, tạo tài khoản `admin` bằng môi trường Python backend
+   đã cài dependency trên máy:
+
+   ```powershell
+   cd backend
+   .venv\Scripts\python.exe -m app.create_admin
+   cd ..
+   ```
+
+   Mật khẩu mặc định xem trong [backend/app/create_admin.py](backend/app/create_admin.py);
+   đổi mật khẩu ngay sau khi đăng nhập.
+
+Web: <http://localhost:8080>; API: <http://localhost:8000/docs>; broker MQTT: cổng **1883**
+(cổng mặc định). Image backend không hỗ trợ camera. Không chạy `just backend` cùng lúc
+với backend Docker vì trùng cổng **8000**.
+
+**Demo servo/relay từ điện thoại:** bật hotspot laptop, kết nối điện thoại và ESP32
+vào hotspot, bảo đảm thiết bị đã được duyệt và online. Thay `esp32-<hw_id>` bằng ID thật:
+
+```powershell
+.\backend\.venv\Scripts\python.exe -B .\demo\servo_slider\server.py --device esp32-<hw_id> --bind 192.168.137.1 --port 8081
+```
+
+Trên điện thoại mở <http://192.168.137.1:8081> (đổi IP bind và URL nếu hotspot dùng IP khác).
+Trang có quyền **Admin**, ai truy cập được cũng điều khiển được thiết bị; **chỉ dùng hotspot riêng**.
+Chi tiết: [demo/servo_slider/README.md](demo/servo_slider/README.md).
+
+### Chạy backend trực tiếp
+
+Chạy nhanh (PowerShell, tại thư mục gốc; dùng thay cho profile `app`):
 
 ```powershell
 # Chỉ chép khi chưa có .env (chép đè sẽ mất mật khẩu thật), rồi đổi hai mật khẩu
