@@ -124,10 +124,11 @@ class App:
     def new_link(self, client_id, user, password, handler):
         cfg = self.config["mqtt"]
         profile = self.network or {}
+        tls = cfg.get("tls") or None
         return MQTTLink(client_id, profile.get("mqtt_host", cfg["host"]),
-                        port=profile.get("mqtt_port", cfg.get("port", 1883)),
+                        port=profile.get("mqtt_port", cfg.get("port", 8883 if tls else 1883)),
                         user=user, password=password, keepalive=cfg.get("keepalive", 30),
-                        handler=handler)
+                        handler=handler, tls=tls)
 
     def publish(self, leaf, data, retain=False, qos=0):
         fan = self.fan_control

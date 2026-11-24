@@ -3,6 +3,46 @@ import time
 from umqtt.simple import MQTTClient, MQTTException
 
 IO_TIMEOUT_S = 10
+# Outside /app: survives an OTA rollback, so a failed TLS trial can be diagnosed over Wi-Fi
+# afterwards (get_info returns it as "last_mqtt_error").
+ERROR_FILE = "/mqtt_error.txt"
+
+
+def _note(text, mode="a"):
+    try:
+        with open(ERROR_FILE, mode) as f:
+            f.write("%s mem_free=%d; " % (text, gc.mem_free()))
+    except Exception:
+        pass
+
+
+def remember_error(stage, exc):
+    _note("%s %s: %r" % (stage, type(exc).__name__, exc.args))
+
+
+class _TimedTLS:
+    """Wraps the SSLContext to log handshake progress to ERROR_FILE.
+
+    No socket timeout here: on the ESP32 build tested (MicroPython 1.29, no PSRAM) the handshake
+    hung even with one, so a hang is left to the OTA trial watchdog to recover.
+    """
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+
+    def wrap_socket(self, sock, server_hostname=None, **kwargs):
+        _note("tls handshake start", "w")
+        wrapped = self.ctx.wrap_socket(sock, server_hostname=server_hostname, **kwargs)
+        _note("tls handshake ok")
+        return wrapped
+
+
+def last_error():
+    try:
+        with open(ERROR_FILE) as f:
+            return f.read()
+    except OSError:
+        return None
 
 
 class NotAuthorised(Exception):
@@ -13,12 +53,43 @@ def _bytes(value):
     return value.encode() if isinstance(value, str) else value
 
 
+def tls_context(tls):
+    """SSLContext for config["mqtt"]["tls"]: {"ca": PEM text} or {"ca_file": path}.
+
+    With a CA the broker certificate (chain, validity dates, host name/IP) is verified;
+    {"insecure": true} encrypts without verification (testing only).
+    """
+    import ssl
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ca = tls.get("ca")
+    if ca is None and tls.get("ca_file"):
+        with open(tls["ca_file"]) as f:
+            ca = f.read()
+    if ca:
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        ctx.load_verify_locations(cadata=_bytes(ca))
+    elif tls.get("insecure"):
+        ctx.verify_mode = ssl.CERT_NONE
+    else:
+        raise ValueError("mqtt.tls needs ca, ca_file or insecure")
+    return ctx
+
+
 class MQTTLink:
     def __init__(self, client_id, host, port=1883, user=None, password=None,
-                 keepalive=30, handler=None):
+                 keepalive=30, handler=None, tls=None):
+        kwargs = {}
+        if tls:
+            gc.collect()  # the TLS handshake needs a large contiguous block
+            try:
+                kwargs["ssl"] = _TimedTLS(tls_context(tls))
+            except Exception as exc:
+                remember_error("tls_context", exc)
+                raise
         self.client = MQTTClient(_bytes(client_id), host, port=port,
                                  user=_bytes(user), password=_bytes(password),
-                                 keepalive=keepalive)
+                                 keepalive=keepalive, **kwargs)
+        self.tls = bool(tls)
         self.keepalive = keepalive
         self.handler = handler
         self.closed = False
@@ -40,6 +111,10 @@ class MQTTLink:
         except MQTTException as exc:
             if exc.args and exc.args[0] in (4, 5):
                 raise NotAuthorised("MQTT credentials refused")
+            remember_error("tls" if self.tls else "plain", exc)
+            raise
+        except Exception as exc:
+            remember_error("tls" if self.tls else "plain", exc)
             raise
         self.last_out = time.ticks_ms()
         self._set_timeout()

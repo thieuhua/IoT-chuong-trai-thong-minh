@@ -80,7 +80,7 @@ def test_tc76_servo_khong_tu_quay_khi_khoi_dong():
             assert actuator.get("sequence", {}).get("autostart") is not True
 
 
-@xfail(reason="P2: ESP32 vẫn nối MQTT 1883 không mã hóa; báo cáo ghi TLS 8883")
+@xfail(reason="Hạn chế: broker có TLS 8883 (just tls-cert) nhưng ESP32 không PSRAM treo khi bắt tay TLS; ESP32 dùng 1883 trong LAN riêng")
 def test_tc77_esp32_dung_tls():
     config = json.loads((ROOT / "firmware" / "config.example.json").read_text(encoding="utf-8"))
     assert config["mqtt"]["port"] == 8883 or config["mqtt"].get("tls") or config["mqtt"].get("ssl")

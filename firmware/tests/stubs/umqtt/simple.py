@@ -19,8 +19,9 @@ class MQTTClient:
     next_messages = []
     next_connect_error = None
 
-    def __init__(self, client_id, server, port=1883, user=None, password=None, keepalive=0):
+    def __init__(self, client_id, server, port=1883, user=None, password=None, keepalive=0, ssl=None):
         self.client_id, self.server, self.port = client_id, server, port
+        self.ssl = ssl
         self.user, self.password, self.keepalive = user, password, keepalive
         self.events = []
         self.publishes = []

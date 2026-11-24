@@ -6,3 +6,4 @@ src/config.json
 __pycache__/
 .pytest_cache/
 .pytest_tmp/
+src/mqtt_ca.pem

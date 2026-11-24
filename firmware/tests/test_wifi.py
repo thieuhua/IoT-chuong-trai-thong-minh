@@ -142,3 +142,50 @@ def test_app_uses_selected_profile_and_updates_on_wifi_drop(ctx, monkeypatch):
 def test_get_info_has_ssid(ctx):
     ctx.network = {"ssid": "Wifi nha"}
     assert commands.get_info(ctx, {})["ssid"] == "Wifi nha"
+
+
+class FakeSSL:
+    """Records what MicroPython's ssl module would be asked to do."""
+    PROTOCOL_TLS_CLIENT, CERT_NONE, CERT_REQUIRED = 16, 0, 2
+
+    class SSLContext:
+        def __init__(self, protocol):
+            self.protocol, self.verify_mode, self.cadata = protocol, None, None
+
+        def load_verify_locations(self, cadata=None):
+            self.cadata = cadata
+
+
+@pytest.fixture
+def fake_ssl(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "ssl", FakeSSL)
+    return FakeSSL
+
+
+def test_tls_link_verifies_broker_with_configured_ca(ctx, fake_ssl):
+    ctx.config["mqtt"].update(host="192.168.137.1", tls={"ca": "-----BEGIN CERTIFICATE-----\n"})
+    ctx.config["mqtt"].pop("port", None)
+    ctx.network = None
+    link = ctx.new_link("id", "user", "password", None)
+    assert link.client.port == 8883 and link.tls
+    context = link.client.ssl.ctx
+    assert context.verify_mode == fake_ssl.CERT_REQUIRED
+    assert context.cadata == b"-----BEGIN CERTIFICATE-----\n"
+
+
+def test_tls_ca_file_and_insecure_and_missing_ca(ctx, fake_ssl, tmp_path):
+    from core.mqtt_link import tls_context
+    ca = tmp_path / "ca.pem"
+    ca.write_text("PEM")
+    assert tls_context({"ca_file": str(ca)}).cadata == b"PEM"
+    assert tls_context({"insecure": True}).verify_mode == fake_ssl.CERT_NONE
+    with pytest.raises(ValueError):
+        tls_context({})
+
+
+def test_plain_link_has_no_tls(ctx):
+    ctx.config["mqtt"].pop("tls", None)
+    ctx.network = None
+    link = ctx.new_link("id", "user", "password", None)
+    assert link.client.ssl is None and not link.tls

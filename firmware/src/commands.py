@@ -41,6 +41,10 @@ def get_info(ctx, args):
     result.update({"uptime_s": ctx.uptime_s(), "mem_free": gc.mem_free(),
                    "rssi": wlan.status("rssi"), "ip": wlan.ifconfig()[0],
                    "ssid": (ctx.network or {}).get("ssid")})
+    from core.mqtt_link import last_error
+    error = last_error()
+    if error:
+        result["last_mqtt_error"] = error
     return result
 
 

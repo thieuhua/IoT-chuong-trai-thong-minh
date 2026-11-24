@@ -256,6 +256,7 @@ Chế độ `AUTH_MODE=none` (giống demo cũ) bỏ toàn bộ phần này: bro
 ## 9. Giới hạn đã biết
 
 - ESP32 kết nối MQTT trực tiếp qua LAN phát triển tin cậy bằng plaintext. Backend từ xa có thể kết nối qua TLS bằng listener trong `deployment/compose.tunnel.yaml`.
+- TLS cho LAN (thử nghiệm, mặc định tắt): `just tls-cert [ip]` tạo CA riêng + chứng chỉ broker cho IP đó (volume `mosquitto-tls`, khóa không vào repo) và bật listener 8883; firmware bật bằng `mqtt.tls = {"ca": "<PEM>"}` (hoặc `ca_file`) trong `config.json`, cổng mặc định thành 8883, xác minh chuỗi chứng chỉ, hạn dùng và IP. Client MicroPython 1.29 (unix) và openssl bắt tay được; **ESP32 không PSRAM treo ngay khi bắt tay** (`get_info.last_mqtt_error` = "tls handshake start"), nên ESP32 vẫn dùng 1883 trong LAN riêng. Bật thử trên board chỉ qua OTA (có rollback), không nạp thẳng.
 - `hw_id` là địa chỉ MAC, có thể bị giả mạo. Vì vậy mặc định cần admin duyệt; `AUTO_APPROVE` chỉ dành cho phát triển.
 - Tài khoản `bootstrap` dùng chung: lộ mật khẩu này chỉ cho phép gửi yêu cầu đăng ký và đọc trạng thái duyệt, không đọc được mật khẩu hay dữ liệu thiết bị khác. Thiết bị bootstrap có thể gửi request mang `hw_id` của máy khác; vì vậy admin duyệt theo `hw_id` in ra trên serial của board.
 - ESP32 dùng `umqtt.simple` với clean session: lệnh gửi khi thiết bị offline sẽ mất.

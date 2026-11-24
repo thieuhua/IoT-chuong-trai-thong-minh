@@ -15,9 +15,13 @@ chown -R mosquitto:mosquitto /mosquitto/data
 rm -f /tmp/dynsec-ready
 
 config=/mosquitto/config/mosquitto.conf
-if [ -n "${MQTT_TLS_CONFIG:-}" ]; then
+# TLS listener (8883) only once a certificate exists: `just tls-cert` creates it for the LAN.
+if [ -n "${MQTT_TLS_CONFIG:-}" ] && [ -s /mosquitto/tls/fullchain.pem ] && [ -s /mosquitto/tls/privkey.pem ]; then
     cat "$config" "$MQTT_TLS_CONFIG" > /tmp/mosquitto.conf
     config=/tmp/mosquitto.conf
+    echo "init: TLS listener on 8883 enabled"
+elif [ -n "${MQTT_TLS_CONFIG:-}" ]; then
+    echo "init: no certificate in /mosquitto/tls, TLS listener disabled (run: just tls-cert)"
 fi
 mosquitto -c "$config" &
 BROKER_PID=$!

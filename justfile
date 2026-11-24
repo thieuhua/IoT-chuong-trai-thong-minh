@@ -48,6 +48,12 @@ broker-status:
 broker-logs:
     docker compose -f deployment/compose.yaml logs --tail 100 -f mosquitto
 
+# Create the LAN CA + broker certificate for MQTT TLS (8883); copies the public CA to
+# firmware/src/mqtt_ca.pem. Re-run with the new IP if the hotspot address changes.
+tls-cert ip='192.168.137.1':
+    docker run --rm -v iot-platform_mosquitto-tls:/tls -v '{{ justfile_directory() }}/deployment/mosquitto:/scripts:ro' -v '{{ justfile_directory() }}/firmware/src:/out' alpine:3.22 sh /scripts/make-lan-cert.sh '{{ ip }}'
+    docker compose -f deployment/compose.yaml restart mosquitto
+
 # Start FastAPI at http://localhost:8000 (API docs: /docs); accepts uvicorn flags.
 [working-directory('backend')]
 backend *args:

@@ -5,9 +5,13 @@ services:
     image: eclipse-mosquitto:2.0.22
     entrypoint: ["/bin/sh", "/mosquitto/entrypoint.sh"]
     env_file: ${IOT_ENV_FILE:-.env}
-    # All host interfaces: needed for ESP32 on the LAN. Development only.
+    environment:
+      # Appended only when /mosquitto/tls has a certificate (see entrypoint.sh, `just tls-cert`).
+      MQTT_TLS_CONFIG: /mosquitto/tls-listener.conf
+    # All host interfaces: needed for ESP32 on the LAN. 1883 plain (backend, tools), 8883 TLS (ESP32).
     ports:
       - "1883:1883"
+      - "8883:8883"
     volumes:
       - type: bind
         source: ./mosquitto/mosquitto.conf
@@ -17,7 +21,9 @@ services:
         source: ./mosquitto/entrypoint.sh
         target: /mosquitto/entrypoint.sh
         read_only: true
+      - ./mosquitto/tls-listener.conf:/mosquitto/tls-listener.conf:ro
       - mosquitto-data:/mosquitto/data
+      - mosquitto-tls:/mosquitto/tls:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/dynsec-ready && mosquitto_sub -h 127.0.0.1 -u backend -P \"$$MQTT_BACKEND_PASSWORD\" -t '$$SYS/broker/version' -C 1 -W 3"]
       interval: 30s
@@ -83,4 +89,6 @@ services:
 
 volumes:
   mosquitto-data:
+  # LAN CA + broker certificate from `just tls-cert` (compose.tunnel.yaml swaps in its own).
+  mosquitto-tls:
   backend-data:
