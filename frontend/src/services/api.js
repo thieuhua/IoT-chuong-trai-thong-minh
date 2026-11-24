@@ -144,6 +144,7 @@ export async function request(url, options = {}) {
     const error = new Error(message);
     error.status = response.status;
     error.code = errorCode;
+    error.detail = errorDetail;
     throw error;
   }
 
@@ -223,6 +224,24 @@ export async function apiSendBarnCommand(barnId, action, params = null) {
 export async function apiGetBarnCommands(barnId) {
   const res = await request(`/barns/${barnId}/commands`);
   return Array.isArray(res) ? res : [];
+}
+
+export async function apiGetBarnAssignments(barnId) {
+  return request(`/barns/${encodeURIComponent(barnId)}/assignments`);
+}
+
+export async function apiAssignBarnUser(barnId, userId, role) {
+  return request(`/barns/${encodeURIComponent(barnId)}/assignments`, {
+    method: 'PUT',
+    body: JSON.stringify({ assignments: [{ user_id: userId, access_level: role }] }),
+  });
+}
+
+export async function apiRemoveBarnUser(barnId, userId) {
+  return request(`/barns/${encodeURIComponent(barnId)}/assignments`, {
+    method: 'DELETE',
+    body: JSON.stringify({ user_id: userId }),
+  });
 }
 
 // ==========================================
@@ -398,6 +417,13 @@ export async function apiUpdateUser(userId, data) {
   return request(`/users/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
+  });
+}
+
+export async function apiResetUserPassword(userId, newPassword) {
+  return request(`/users/${encodeURIComponent(userId)}/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ new_password: newPassword }),
   });
 }
 

@@ -977,10 +977,17 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_roles("Admin"))
 ):
-    if user_id == current_user.id and body.status == "locked":
-        raise HTTPException(400, "Cannot lock your own account")
-
     return user.update_user(db, user_id, body, current_user.id)
+
+
+@app.put("/users/{user_id}/password")
+def reset_user_password(
+    user_id: str,
+    body: schemas.AdminPasswordResetSchema,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("Admin"))
+):
+    return user.reset_password(db, user_id, body, current_user.id)
 
 # =========================================
 # 3. BARN MANAGEMENT

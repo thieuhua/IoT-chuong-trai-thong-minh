@@ -30,6 +30,8 @@ export default function ClimateCard({
   currentReadings = {},
   isOnline = false,
   onRelayToggle,
+  onFanAuto,
+  fanMode = null,
 }) {
   const { canControl } = useAuth();
 
@@ -68,6 +70,9 @@ export default function ClimateCard({
         <div>
           <div className="env-label">
             Quạt Làm Mát {!isOnline && <span className="text-muted">(Offline)</span>}
+            {fanMode && (
+              <span className="text-muted"> · {fanMode === 'AUTO' ? 'Tự động' : 'Chỉnh tay'}</span>
+            )}
           </div>
           <div className="env-actions">
             <button
@@ -85,6 +90,14 @@ export default function ClimateCard({
               title={!isOnline ? 'Thiết bị đang offline' : ''}
             >
               Tắt
+            </button>
+            <button
+              className={`btn btn-sm ${fanMode === 'AUTO' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => onFanAuto?.()}
+              disabled={!canControl || !isOnline || !onFanAuto}
+              title="Quạt tự bật khi ≥ 32 °C, tắt khi ≤ 30 °C"
+            >
+              Tự động
             </button>
           </div>
         </div>

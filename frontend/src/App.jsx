@@ -28,11 +28,17 @@ export default function App() {
   const [devices, setDevices] = useState([]);
   const [registrations, setRegistrations] = useState([]);
   const [alerts, setAlerts] = useState([]);
-  const [notification, setNotification] = useState(null);
+  const [notifications, setNotifications] = useState([]);
 
+  const dismissNotification = (id) => {
+    setNotifications((list) => list.filter((item) => item.id !== id));
+  };
+
+  // Floating toasts (bottom-right): stack up to 4, errors stay longer.
   const showNotification = (text, type = 'info') => {
-    setNotification({ text, type });
-    setTimeout(() => setNotification(null), 3000);
+    const id = `${Date.now()}-${Math.random()}`;
+    setNotifications((list) => [...list.slice(-3), { id, text, type }]);
+    setTimeout(() => dismissNotification(id), type === 'error' ? 7000 : 4000);
   };
 
   const syncSystemData = async () => {
@@ -76,14 +82,16 @@ export default function App() {
         brokerOnline={brokerOnline}
       />
 
-      {notification && (
-        <div className={`toast-notification toast-${notification.type}`}>
-          <span>{notification.text}</span>
-          <button onClick={() => setNotification(null)} className="toast-close">
-            ✕
-          </button>
-        </div>
-      )}
+      <div className="toast-stack" role="status" aria-live="polite">
+        {notifications.map((item) => (
+          <div key={item.id} className={`toast-notification toast-${item.type}`}>
+            <span>{item.text}</span>
+            <button onClick={() => dismissNotification(item.id)} className="toast-close" aria-label="Đóng thông báo">
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
 
       {viewMode === 'desktop' && (
         <>

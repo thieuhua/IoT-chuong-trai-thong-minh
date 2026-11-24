@@ -28,9 +28,15 @@ export function resolveBarnSelection(barns = [], devices = [], selection = {}) {
     : [];
   const currentSensor = (sameDevice && sensors.find((sensor) => sensor.name === selection.sensorName))
     || sensors.find((sensor) => sensor.name === 'room') || sensors[0];
+  const showSensorTabs = sensors.length > 1;
+  const breadcrumb = [
+    zone?.name, currentBarn?.name || barnId, currentDev?.name || currentDev?.device_id,
+    showSensorTabs ? currentSensor?.name : null,
+  ].filter(Boolean).join(' / ');
 
   return {
     zones, zoneBarns, barnDevices, sensors, currentBarn, currentDev, currentSensor,
+    showSensorTabs, breadcrumb,
     selection: {
       zone: zone?.name || '',
       barnId,

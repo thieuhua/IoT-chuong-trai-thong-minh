@@ -89,3 +89,33 @@ test('numeric barn ids match select values without admitting unassigned devices'
   assert.deepEqual(view.barnDevices.map((device) => device.device_id), ['d7']);
   assert.equal(view.selection.sensorName, 'temp');
 });
+
+test('multiple sensors use device subtabs and include the selected sensor in the breadcrumb', () => {
+  const view = resolveBarnSelection(barns, devices, {
+    zone: 'Khu A', barnId: 'a1', deviceId: 'd2', sensorName: 'soil',
+  });
+  assert.equal(view.showSensorTabs, true);
+  assert.equal(view.breadcrumb, 'Khu A / Chuồng 1 / d2 / soil');
+  const switched = resolveBarnSelection(barns, devices, { ...view.selection, sensorName: 'room' });
+  assert.equal(switched.breadcrumb, 'Khu A / Chuồng 1 / d2 / room');
+});
+
+test('one sensor stays selected without subtabs or a sensor breadcrumb', () => {
+  const view = resolveBarnSelection(barns, [{
+    device_id: 'single', name: 'Thiết bị 1', barn_id: 'a1',
+    sensors: [null, {}, { name: '' }, { name: 'room' }],
+  }], { zone: 'Khu A', barnId: 'a1', deviceId: 'single', sensorName: 'removed' });
+  assert.equal(view.showSensorTabs, false);
+  assert.equal(view.currentSensor.name, 'room');
+  assert.equal(view.breadcrumb, 'Khu A / Chuồng 1 / Thiết bị 1');
+});
+
+test('devices without sensors and empty barns have no sensor navigation', () => {
+  const view = resolveBarnSelection(barns, devices, { zone: 'Khu A', barnId: 'a2' });
+  assert.equal(view.showSensorTabs, false);
+  assert.equal(view.breadcrumb, 'Khu A / Chuồng 3 / d4');
+  const empty = resolveBarnSelection(barns, devices, { zone: 'Khu A', barnId: 'empty' });
+  assert.equal(empty.showSensorTabs, false);
+  assert.equal(empty.breadcrumb, 'Khu A / Chuồng trống');
+  assert.equal(resolveBarnSelection().breadcrumb, '');
+});

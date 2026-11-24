@@ -1,5 +1,5 @@
 
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 
 
 from datetime import datetime
@@ -67,6 +67,17 @@ class UserUpdateSchema(BaseModel):
     role: Optional[Literal["Admin", "Operator", "Viewer"]] = None
     status: Optional[Literal["active", "locked"]] = None
     full_name: Optional[str] = None
+
+
+class AdminPasswordResetSchema(BaseModel):
+    new_password: str = Field(min_length=8, max_length=72)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_fits_bcrypt(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Mật khẩu không được vượt quá 72 byte UTF-8")
+        return value
 
 
 # =========================================

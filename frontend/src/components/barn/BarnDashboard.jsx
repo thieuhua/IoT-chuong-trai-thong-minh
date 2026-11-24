@@ -41,6 +41,7 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
   const [selection, setSelection] = useState(loadSelection);
   const {
     zones, zoneBarns, barnDevices, sensors, currentBarn, currentDev, currentSensor,
+    showSensorTabs, breadcrumb,
     selection: resolvedSelection,
   } = useMemo(() => resolveBarnSelection(barns, devices, selection), [barns, devices, selection]);
   const {
@@ -60,6 +61,7 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
   const refreshCommandHistory = () => setHistoryRevision((revision) => revision + 1);
   const [feedSeconds, setFeedSeconds] = useState(3);
   const [feeding, setFeeding] = useState(false);
+  const [fanMode, setFanMode] = useState(null); // AUTO / MANUAL, from command results
 
   const handleSelectionChange = (next) => {
     const validSelection = resolveBarnSelection(barns, devices, next).selection;
@@ -92,6 +94,7 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
 
   useEffect(() => {
     setLatestTelemetry(null);
+    setFanMode(null);
     if (!selectedDeviceId) return;
 
     let isMounted = true;
@@ -194,7 +197,24 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
         await apiSendDeviceCommand(selectedDeviceId, 'relay_set', payload);
       }
 
-      onNotify(`Đã gửi lệnh ${isOn ? 'bật' : 'tắt'} quạt`);
+      setFanMode('MANUAL');
+      onNotify(`Đã ${isOn ? 'bật' : 'tắt'} quạt (chỉnh tay 30 phút, sau đó tự động lại)`);
+      refreshCommandHistory();
+    } catch (err) {
+      onNotify(err.message, 'error');
+    }
+  };
+
+  // Firmware `mode_set`: AUTO follows temperature (on ≥ 32 °C, off ≤ 30 °C).
+  const handleFanAuto = async () => {
+    if (!canControl || !isOnline || !selectedDeviceId) {
+      onNotify('Thiết bị đang ngoại tuyến hoặc tài khoản không có quyền điều khiển.', 'error');
+      return;
+    }
+    try {
+      const result = await apiSendDeviceCommand(selectedDeviceId, 'mode_set', { mode: 'auto' });
+      setFanMode(result?.mode || 'AUTO');
+      onNotify(`Quạt chuyển sang tự động theo nhiệt độ (hiện ${result?.fan_on ? 'đang bật' : 'đang tắt'})`);
       refreshCommandHistory();
     } catch (err) {
       onNotify(err.message, 'error');
@@ -220,7 +240,7 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
     setFeeding(true);
     try {
       const result = await apiSendDeviceCommand(selectedDeviceId, 'feed', { seconds: Number(feedSeconds) });
-      const count = result?.result?.feed_count;
+      const count = result?.feed_count;
       onNotify(`Đã cho ăn ${feedSeconds} giây${count ? ` (lần ${count} hôm nay)` : ''}`);
     } catch (err) {
       onNotify(FEED_ERRORS[err.code] || err.message, 'error');
@@ -238,13 +258,13 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
             <h2 className="card-title">Môi Trường Chuồng Trại</h2>
             {selectedZone && (
               <p className="card-desc" aria-label="Vị trí cảm biến">
-                {[selectedZone, currentBarn?.name || selectedBarnId, selectedSensorName].filter(Boolean).join(' / ')}
+                {breadcrumb}
               </p>
             )}
           </div>
         </div>
 
-        <div className="chart-controls" aria-label="Chọn khu, chuồng và cảm biến">
+        <div className="chart-controls" aria-label="Chọn khu, chuồng và thiết bị">
           <label className="chart-control">
             <span>Khu</span>
             <select
@@ -292,18 +312,6 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
               <strong>{currentDev.name || currentDev.device_id}</strong>
             </div>
           ) : null}
-          <label className="chart-control">
-            <span>Cảm biến</span>
-            <select
-              value={selectedSensorName}
-              onChange={(event) => handleSelectionChange({ ...resolvedSelection, sensorName: event.target.value })}
-              className="select-control"
-              disabled={sensors.length === 0}
-            >
-              {sensors.length === 0 && <option value="">Chưa có cảm biến</option>}
-              {sensors.map((sensor) => <option key={sensor.name} value={sensor.name}>{sensor.name}</option>)}
-            </select>
-          </label>
         </div>
 
         {!currentBarn ? (
@@ -316,6 +324,21 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
           />
         ) : (
           <>
+            {showSensorTabs && (
+              <div className="subtabs-bar" role="group" aria-label="Cảm biến của thiết bị" style={{ flexWrap: 'wrap' }}>
+                {sensors.map((sensor) => (
+                  <button
+                    key={sensor.name}
+                    type="button"
+                    className={`subtab-btn ${selectedSensorName === sensor.name ? 'active' : ''}`}
+                    aria-pressed={selectedSensorName === sensor.name}
+                    onClick={() => handleSelectionChange({ ...resolvedSelection, sensorName: sensor.name })}
+                  >
+                    {sensor.name}
+                  </button>
+                ))}
+              </div>
+            )}
             {!currentSensor && (
               <EmptyState icon="🌡️" title="Thiết bị chưa có cảm biến" message="Chưa có cảm biến để hiển thị số đo và biểu đồ." />
             )}
@@ -324,6 +347,8 @@ export default function BarnDashboard({ barns = EMPTY_LIST, devices = EMPTY_LIST
               currentReadings={currentReadings}
               isOnline={isOnline}
               onRelayToggle={handleRelayToggle}
+              onFanAuto={handleFanAuto}
+              fanMode={fanMode}
             />
 
             <div className="card" style={{ marginTop: '16px' }}>
