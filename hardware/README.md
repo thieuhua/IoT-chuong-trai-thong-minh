@@ -4,10 +4,15 @@ Một node gồm ESP32 38 chân, cảm biến DHT11, quạt DC 5 V (đóng cắt
 **Tất cả dùng chung một nguồn 5 V** (củ sạc điện thoại 5 V 2 A qua module Type-C) và chung GND.
 Không dùng điện lưới 220 V.
 
-Chân trong tài liệu này **khớp với code hiện tại** (`firmware/config.example.json`), không phải với
-bản nháp báo cáo. Xem mục [Khác với báo cáo](#khác-với-báo-cáo).
+Chân trong tài liệu này khớp với code (`firmware/config.example.json`) và báo cáo.
 
 - [bom.csv](bom.csv): danh sách linh kiện kèm giá tham khảo
+- [so-do-khoi.png](so-do-khoi.png): sơ đồ khối phần cứng
+- [so-do-noi-day.png](so-do-noi-day.png): sơ đồ nối dây
+
+## Sơ đồ khối
+
+![Sơ đồ khối phần cứng](so-do-khoi.png)
 
 ## Sơ đồ chân ESP32
 
@@ -24,9 +29,13 @@ module relay. Module relay loại kích mức thấp (nhiều module bán sẵn 
 `"active_low": true`. Module MOSFET AOD4184 kích mức cao, để `false`.
 
 Không dùng: GPIO0, 2, 5, 12, 15 (chân strapping), GPIO6–11 (flash), GPIO34–39 (chỉ đọc vào, không ra
-được). LED trên GPIO2 trong báo cáo hiện **chưa có trong code**.
+được).
 
 ## Đấu dây
+
+![Sơ đồ nối dây](so-do-noi-day.png)
+
+Màu dây: đỏ +5 V, đen GND, tím 3V3, vàng DATA DHT11, cam PWM servo, xanh lá bật/tắt quạt.
 
 Làm theo thứ tự, **rút sạc** trong lúc nối. Breadboard có hai thanh dài: thanh + (vạch đỏ) là 5 V,
 thanh − (vạch xanh) là GND.
@@ -53,30 +62,6 @@ Ghi chú mục 14:
 
 - **MOSFET AOD4184**: dây đỏ quạt vào OUT+, dây đen vào OUT−. Module tự lấy 5 V từ VIN+.
 - **Relay**: thanh + → COM, NO → dây đỏ quạt, dây đen quạt → thanh −. Quạt chỉ chạy khi relay đóng.
-
-```mermaid
-flowchart LR
-    SAC["Củ sạc 5 V 2 A"] --> TC["Module Type-C"]
-    TC -->|"+5 V"| P["Thanh +5 V"]
-    TC -->|GND| G["Thanh GND"]
-
-    P --> VIN["ESP32 VIN"]
-    P --> SV["SG90 dây đỏ"]
-    P --> SW["Module công tắc quạt VIN+"]
-    P --- C["Tụ 1000 µF"]
-    C --- G
-
-    E33["ESP32 3V3"] --> DHT["DHT11 +"]
-    G25["GPIO25"] <-->|DATA| DHT
-    G14["GPIO14"] -->|PWM 50 Hz| SV
-    G26["GPIO26"] -->|SIG| SW
-    SW -->|"OUT+ / OUT−"| FAN["Quạt 5 V + diode 1N4007"]
-
-    G --- EG["ESP32 GND"]
-    G --- DG["DHT11 −"]
-    G --- SG["SG90 dây nâu"]
-    G --- SWG["Module VIN−"]
-```
 
 ## Nguồn chung: tính dòng
 
@@ -122,16 +107,3 @@ Kết luận: 5 V 2 A đủ, nhưng không dư nhiều. Để tránh ESP32 tự 
 3. Quạt: gửi lệnh `relay_set` `{"on": true}` rồi `{"on": false}`; quạt quay/dừng, ESP32 không reset.
 4. Servo: gửi `servo_set` `{"angle": 0}`, `{"angle": 90}`; quay đủ góc, ESP32 không reset.
 5. Cho quạt và servo chạy cùng lúc vài lần để chắc nguồn chung chịu được.
-
-## Khác với báo cáo
-
-Bản nháp báo cáo và tài liệu BOM cũ dùng chân khác. Code là bản đang chạy, nên báo cáo cần sửa theo
-bảng này (hoặc nhóm đổi `config.json` về chân cũ):
-
-| Mục | Code (tài liệu này) | Báo cáo / BOM cũ |
-| --- | --- | --- |
-| DHT11 DATA | GPIO25 | GPIO4 |
-| Servo tín hiệu | GPIO14 | GPIO13 |
-| Công tắc quạt | GPIO26, driver `relay` | GPIO26, module MOSFET AOD4184 |
-| LED trạng thái | chưa có | GPIO2 |
-| Nguồn | một củ sạc 5 V 2 A chung | giống |

@@ -17,3 +17,8 @@ __pycache__/
 node_modules/
 
 .DS_Store
+
+# Công cụ AI cục bộ, không commit
+.claude/
+.codex-attachments/
+.mcp.json

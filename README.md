@@ -8,14 +8,62 @@ Mỗi chuồng có một ESP32 chạy MicroPython đọc DHT11, bật tắt qu�
 | --- | --- | --- |
 | Hứa Xuân Thiệu (nhóm trưởng) | B23DCCN788 | thieuhua |
 | Hoàng Anh Minh | B23DCCN544 | HoangAnhMinhCN |
-| Bùi Hồng Phong | B23DCCN641 | Pp |
+| Bùi Hồng Phong | B23DCCN641 | Phong2p |
 
 - Báo cáo: [docs/bao-cao/](docs/bao-cao/) (docx + PDF)
 - Giao thức MQTT: [docs/protocol.md](docs/protocol.md)
 - Phần cứng, sơ đồ chân, BOM: [hardware/](hardware/)
-- CSDL: [database/schema.sql](database/schema.sql)
+- CSDL: [database/schema.sql](database/schema.sql), dữ liệu mẫu [database/sample-data.sql](database/sample-data.sql)
+- Sơ đồ thiết kế (bối cảnh, kiến trúc, ERD, tuần tự, vòng đời, triển khai): [docs/so-do/](docs/so-do/)
+- Ảnh giao diện web: [docs/anh-giao-dien/](docs/anh-giao-dien/)
 - Biến môi trường mẫu: [.env.example](.env.example) (bản dùng thật đặt ở `deployment/.env`)
 - Kiểm thử hệ thống: [tests/](tests/)
+
+## Kiến trúc
+
+![Kiến trúc tổng thể](docs/so-do/02-kien-truc-tong-the.png)
+
+Hệ thống gồm 4 phần, nói chuyện với nhau như sau:
+
+| Phần | Công nghệ | Vai trò |
+| --- | --- | --- |
+| Thiết bị tại chuồng | ESP32 + MicroPython, DHT11, quạt 5 V, servo SG90 | Đọc nhiệt độ, độ ẩm; tự bật quạt theo ngưỡng (cảm biến lỗi thì bật quạt); thực hiện lệnh và trả kết quả |
+| Broker | Mosquitto 2.0.22, Dynamic Security | Chuyển bản tin MQTT `iot/v1/...`; mỗi thiết bị một tài khoản, ACL chỉ cho đúng topic của mình; LWT báo offline |
+| Backend | FastAPI, SQLAlchemy, MySQL | Đăng ký và duyệt thiết bị, lưu telemetry, rule cảnh báo, gửi lệnh và lưu lịch sử, JWT + 3 vai trò, audit log |
+| Web | React (Vite), nginx | Dashboard, biểu đồ, cảnh báo, điều khiển, quản lý thiết bị và tài khoản |
+
+Luồng chính:
+
+- **Thiết bị → backend:** ESP32 publish telemetry, trạng thái (online/offline, retained + LWT) và kết quả lệnh. Backend kiểm tra, lưu vào MySQL, chạy rule cảnh báo, đẩy lên web qua SSE.
+- **Backend → thiết bị:** người dùng bấm lệnh trên web, backend kiểm tra quyền theo chuồng, publish lệnh có `command_id`, thiết bị chống trùng, thực hiện rồi trả kết quả.
+
+Chi tiết topic và bản tin: [docs/protocol.md](docs/protocol.md). Các sơ đồ khác: [docs/so-do/](docs/so-do/).
+
+### Cấu trúc thư mục
+
+| Thư mục | Nội dung |
+| --- | --- |
+| `firmware/` | Firmware MicroPython cho ESP32, test chạy trên máy tính |
+| `backend/` | API FastAPI, `iot_core` (gateway MQTT), xử lý telemetry, cảnh báo, lịch |
+| `frontend/` | Web React |
+| `database/` | `schema.sql` (cấu trúc bảng), `sample-data.sql` (dữ liệu mẫu) |
+| `deployment/` | Docker Compose, cấu hình Mosquitto, `.env.example` |
+| `hardware/` | Sơ đồ chân, sơ đồ khối, sơ đồ nối dây, BOM |
+| `tests/` | Kiểm thử hệ thống (chức năng, phân quyền, bảo mật, hiệu năng) |
+| `docs/` | Báo cáo, giao thức, sơ đồ thiết kế, ảnh giao diện |
+| `demo/` | Demo MQTT cũ và trang điều khiển servo từ điện thoại |
+
+## Dữ liệu mẫu
+
+Sau khi tạo bảng bằng `schema.sql`, nạp dữ liệu mẫu để xem thử dashboard mà chưa cần ESP32:
+
+```powershell
+Get-Content database\schema.sql, database\sample-data.sql -Encoding UTF8 | mysql -u root -p
+```
+
+Dữ liệu mẫu có 3 tài khoản `demo_admin`, `demo_operator`, `demo_viewer` (mật khẩu chung `Demo@12345`,
+chỉ dùng để thử), 2 chuồng, 1 thiết bị đã duyệt và 1 thiết bị chờ duyệt, 24 giờ đo (10 phút/lần),
+1 rule cảnh báo nhiệt độ > 33 °C, lịch sử lệnh, lịch cho ăn và audit log.
 
 ## Nền tảng thiết bị ESP32 + Mosquitto
 
