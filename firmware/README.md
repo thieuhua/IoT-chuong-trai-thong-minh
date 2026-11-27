@@ -62,7 +62,7 @@ Chạy từ gốc repo. Script PowerShell dùng `.venv/Scripts/mpremote.exe` ho�
 | Script | Dùng khi nào | Ví dụ một dòng |
 | --- | --- | --- |
 | `firmware/tools/board.ps1` | `ports`, `monitor`, `info`, `scan`, `backup`, `reset` qua USB | `powershell -File firmware/tools/board.ps1 info -Port COM3` |
-| `firmware/tools/flash_micropython.ps1` | Xóa board và nạp binary mới nhất trong `firmware/bin/`, hoặc chọn `-Bin`; gõ `yes` để xác nhận (`-Force` bỏ câu hỏi) | `powershell -File firmware/tools/flash_micropython.ps1 -Port COM3 -WhatIf` |
+| `firmware/tools/flash_micropython.ps1` | Xóa board và nạp binary mới nhất trong `firmware/bin/` (tự tải MicroPython 1.29.0 kèm kiểm tra SHA-256 nếu chưa có), hoặc chọn `-Bin`; gõ `yes` để xác nhận (`-Force` bỏ câu hỏi) | `powershell -File firmware/tools/flash_micropython.ps1 -Port COM3 -WhatIf` |
 | `firmware/tools/make_config.py` | `init` từ example và mật khẩu bootstrap trong `deployment/.env`; `wifi-add`, `wifi-remove`, `wifi-list`, `check` | `python firmware/tools/make_config.py wifi-add "Wifi nha" --mqtt-host 192.168.1.20 --first` |
 | `backend/tools/device_cmd.py` | Đăng nhập REST, liệt kê thiết bị hoặc gửi lệnh; mật khẩu nhập ẩn | `python backend/tools/device_cmd.py --user admin esp32-ID ping` |
 
