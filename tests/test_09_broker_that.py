@@ -101,7 +101,7 @@ async def approved(real, tmp_path):
         async def pending():
             return any(r.hw_id == hw for r in await gw.list_registrations())
         await eventually(pending)
-        device = await gw.approve(hw)
+        device = await gw.approve(hw, device_id=p.default_device_id(hw))
 
         async def online():
             return (await gw.get_device(device.device_id)).online

@@ -131,6 +131,7 @@ export default function DeviceManager({
         <DeviceList
           barns={barns}
           devices={devices}
+          pendingHwIds={new Set(registrations.map((reg) => reg.hw_id))}
           onRefresh={onRefreshDevices}
           onPing={handlePing}
           onReboot={handleReboot}

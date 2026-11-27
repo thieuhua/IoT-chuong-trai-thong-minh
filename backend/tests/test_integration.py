@@ -61,7 +61,7 @@ async def test_real_device_lifecycle_and_acl(real_gateway, tmp_path):
         registration = await eventually(pending)
         assert registration.status == RegistrationStatus.PENDING
         assert len(registration.password) == 32
-        device = await gw.approve(hw)
+        device = await gw.approve(hw, device_id=device_id)
         assert device.device_id == device_id
         async def online():
             return (await gw.get_device(device_id)).online

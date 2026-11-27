@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { apiGetRegistrations } from '../../services/api';
 import Pagination from '../common/Pagination';
 import EmptyState from '../common/EmptyState';
 
 export default function PendingRegistrations({
   barns = [],
-  registrations = [],
+  registrations: pendingRegistrations = [],
   onRefresh,
   onApprove,
   onReject,
@@ -13,7 +14,29 @@ export default function PendingRegistrations({
   const { canManage } = useAuth();
   const [page, setPage] = useState(1);
   const [assignedBarns, setAssignedBarns] = useState({});
+  // 'pending' uses the list App keeps fresh; 'rejected' is fetched here on demand.
+  const [view, setView] = useState('pending');
+  const [rejectedRegistrations, setRejectedRegistrations] = useState([]);
   const pageSize = 6;
+  const showingRejected = view === 'rejected';
+  const registrations = showingRejected ? rejectedRegistrations : pendingRegistrations;
+
+  const loadRejected = async () => {
+    setRejectedRegistrations(await apiGetRegistrations('rejected').catch(() => []));
+  };
+
+  const changeView = (next) => {
+    setView(next);
+    setPage(1);
+    if (next === 'rejected') loadRejected();
+  };
+
+  const refresh = () => (showingRejected ? loadRejected() : onRefresh());
+
+  const approve = async (hwId) => {
+    await onApprove(hwId, null, '', assignedBarns[hwId] || null);
+    if (showingRejected) loadRejected();
+  };
 
   const totalPages = Math.ceil(registrations.length / pageSize) || 1;
   const pagedRegistrations = registrations.slice((page - 1) * pageSize, page * pageSize);
@@ -28,15 +51,25 @@ export default function PendingRegistrations({
         <div>
           <h2 className="card-title">Cấp Phép Thiết Bị</h2>
         </div>
-        <button className="btn btn-secondary btn-sm" onClick={onRefresh}>
-          Làm mới
-        </button>
+        <div className="filters-row">
+          <select
+            value={view}
+            onChange={(e) => changeView(e.target.value)}
+            className="select-control"
+          >
+            <option value="pending">Chờ duyệt</option>
+            <option value="rejected">Đã từ chối</option>
+          </select>
+          <button className="btn btn-secondary btn-sm" onClick={refresh}>
+            Làm mới
+          </button>
+        </div>
       </div>
 
       {registrations.length === 0 ? (
         <EmptyState
           icon="✅"
-          title="Không có yêu cầu chờ duyệt"
+          title={showingRejected ? 'Không có yêu cầu bị từ chối' : 'Không có yêu cầu chờ duyệt'}
         />
       ) : (
         <>
@@ -77,20 +110,24 @@ export default function PendingRegistrations({
                     <div className="action-buttons-row">
                       <button
                         className="btn btn-success btn-xs"
-                        onClick={() =>
-                          onApprove(reg.hw_id, null, '', assignedBarns[reg.hw_id] || null)
-                        }
+                        onClick={() => approve(reg.hw_id)}
                         disabled={!canManage}
                       >
                         Duyệt
                       </button>
-                      <button
-                        className="btn btn-danger btn-xs"
-                        onClick={() => onReject(reg.hw_id)}
-                        disabled={!canManage}
-                      >
-                        Từ chối
-                      </button>
+                      {showingRejected ? (
+                        <span className="text-muted" title="Lý do từ chối">
+                          {reg.reason || 'Đã từ chối'}
+                        </span>
+                      ) : (
+                        <button
+                          className="btn btn-danger btn-xs"
+                          onClick={() => onReject(reg.hw_id)}
+                          disabled={!canManage}
+                        >
+                          Từ chối
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

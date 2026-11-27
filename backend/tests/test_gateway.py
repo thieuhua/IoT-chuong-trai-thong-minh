@@ -96,6 +96,21 @@ async def test_invalid_provision_ignored(gateway, data):
     assert await gateway.list_registrations(None) == []
 
 
+async def test_default_device_ids_are_sequential_not_hw_id(gateway):
+    await request(gateway, hw='aa0000000001')
+    first = await gateway.approve('aa0000000001')
+    await request(gateway, hw='aa0000000002')
+    second = await gateway.approve('aa0000000002')
+    assert (first.device_id, second.device_id) == ('esp32-001', 'esp32-002')
+    # Same chip registering again (lost credentials) keeps its id.
+    await request(gateway, hw='aa0000000001', password='b' * 32)
+    assert (await gateway.approve('aa0000000001')).device_id == 'esp32-001'
+    # A revoked id is not handed to another board.
+    await gateway.revoke('esp32-002')
+    await request(gateway, hw='aa0000000003')
+    assert (await gateway.approve('aa0000000003')).device_id == 'esp32-003'
+
+
 async def test_auto_approve(gateway, caplog):
     gateway.config.auto_approve = True
     await request(gateway)

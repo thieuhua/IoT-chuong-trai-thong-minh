@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any, TypeVar
@@ -27,6 +28,8 @@ from .provisioning import handle_request, reply
 from .registry import DeviceRegistry
 from .telemetry import TelemetryStore
 from .transport import MqttTransport
+
+_SEQUENTIAL_ID = re.compile(r"^esp32-(\d+)$")
 
 T = TypeVar("T")
 Callback = Callable[[T], "Awaitable[None] | None"]
@@ -259,7 +262,7 @@ class DeviceGateway:
     async def approve(self, hw_id: str, *, device_id: str | None = None, name: str = "") -> Device:
         """Approve a pending registration.
 
-        device_id defaults to protocol.default_device_id(hw_id). Creates the broker account with the
+        device_id defaults to the hw_id's current device id, else the next esp32-NNN. Creates the broker account with the
         password the device sent, saves the Device, clears the stored password, then publishes
         provision.response approved. Raises RegistrationNotFound, InvalidState (not pending),
         ValueError (bad or already-used device_id).
@@ -416,13 +419,15 @@ class DeviceGateway:
             raise InvalidState(registration.status.value)
         if not registration.password:
             raise InvalidState("Registration has no password")
-        device_id = device_id if device_id is not None else protocol.default_device_id(hw_id)
+        previous = await self.registry.get_device_by_hw_id(hw_id)
+        if device_id is None:
+            # The same chip keeps its id; a new one gets the next esp32-NNN (not derived from hw_id).
+            device_id = previous.device_id if previous else await self._next_device_id()
         if not protocol.is_valid_device_id(device_id):
             raise ValueError("Invalid device_id")
         owner = await self.registry.get_device(device_id)
         if owner and owner.hw_id != hw_id:
             raise ValueError("device_id already used")
-        previous = await self.registry.get_device_by_hw_id(hw_id)
         if previous and previous.device_id != device_id:
             await self.revoke(previous.device_id)
         await self.broker_auth.create_device_account(device_id, registration.password)
@@ -439,6 +444,14 @@ class DeviceGateway:
         await self.registry.save_registration(registration)
         await reply(self, registration)
         return device
+
+    async def _next_device_id(self) -> str:
+        """esp32-001, esp32-002, ...: one past the highest number used by a device or registration,
+        so a revoked device's id is not handed to another board."""
+        used = [d.device_id for d in await self.registry.list_devices()]
+        used += [r.device_id for r in await self.registry.list_registrations(None) if r.device_id]
+        numbers = [int(m.group(1)) for m in map(_SEQUENTIAL_ID.match, used) if m]
+        return f"esp32-{max(numbers, default=0) + 1:03d}"
 
     async def _liveness_loop(self) -> None:
         while True:

@@ -29,7 +29,7 @@ async def test_real_ota_confirm_and_rollback(real_gateway, tmp_path):
         async def pending():
             return next((r for r in await gw.list_registrations() if r.hw_id == hw), None)
         await eventually(pending)
-        await gw.approve(hw)
+        await gw.approve(hw, device_id=device_id)
         async def online():
             return (await gw.get_device(device_id)).online
         await eventually(online)

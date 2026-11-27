@@ -6,6 +6,7 @@ MQTT có Dynamic Security, đúng giao thức docs/protocol.md (topic iot/v1/...
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -29,7 +30,7 @@ async def test_tc20_vong_doi_day_du(system):
     # 2. Admin duyệt → backend tạo tài khoản MQTT riêng + role chỉ cho topic của nó
     await system.approve_via_api(device.hw_id)
     await system.broker.settle()
-    assert device.device_id == p.default_device_id(device.hw_id)
+    assert re.fullmatch(r"esp32-\d{3}", device.device_id)  # tuần tự, không lấy từ hw_id
     account = system.broker.accounts[device.device_id]
     assert account.password == device.password and account.clientid == device.device_id
 
@@ -97,7 +98,7 @@ async def test_tc21_tu_choi_dang_ky(system):
     await system.broker.settle()
     assert device.provision_replies[-1] == {"status": "rejected", "reason": "không rõ nguồn gốc"}
     assert device.device_id is None
-    assert p.default_device_id(device.hw_id) not in system.broker.accounts
+    assert not any(name.startswith("esp32-") for name in system.broker.accounts)
 
 
 async def test_tc22_gui_lai_yeu_cau_khong_tao_ban_ghi_trung(system):

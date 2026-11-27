@@ -8,6 +8,7 @@ import { LifecycleBadge, LifecycleActions } from './DeviceLifecycle';
 export default function DeviceList({
   barns = [],
   devices = [],
+  pendingHwIds = new Set(),
   onRefresh,
   onPing,
   onReboot,
@@ -83,7 +84,18 @@ export default function DeviceList({
                       status={dev.online ? 'online' : 'offline'}
                       label={dev.online ? 'Online' : 'Offline'}
                     />
-                    <div><LifecycleBadge device={dev} /></div>
+                    <div>
+                      {!dev.online && pendingHwIds.has(dev.hw_id) ? (
+                        <span
+                          className="status-pill lifecycle-provisioned"
+                          title="Phần cứng này đã gửi yêu cầu đăng ký mới, xem ở mục Chờ Cấp Phép"
+                        >
+                          Chờ duyệt lại
+                        </span>
+                      ) : (
+                        <LifecycleBadge device={dev} />
+                      )}
+                    </div>
                   </td>
                   <td>
                     <button
